@@ -23,22 +23,32 @@ FORBIDDEN_FILES = {"secrets.yaml", ".secret.yaml"}
 # Helpers
 # ---------------------------------------------------------------------------
 def _resolve_device(device: str) -> str:
-    """Resolve a device name to its YAML filename (without path)."""
-    if not device.endswith(".yaml"):
-        device = f"{device}.yaml"
-    return device
+    from .paths import ContainmentError, safe_filename
+
+    try:
+        # Validate the raw device name first so callers can't sneak in "."
+        # or ".." (which would otherwise become "..yaml" / "...yaml" after
+        # the suffix append and silently pass safe_filename).
+        safe_filename(device)
+        name = device if device.endswith(".yaml") else f"{device}.yaml"
+        return safe_filename(name)
+    except ContainmentError as e:
+        raise ValueError(f"invalid device name: {device!r}") from e
 
 
 def _device_yaml_path(device: str) -> str:
-    """Return the full path to a device YAML file."""
+    """Resolve a device name to a contained YAML path. Raises ValueError
+    on traversal attempts."""
+    from .paths import safe_join
+
     filename = _resolve_device(device)
-    path = os.path.join(ESPHOME_DIR, filename)
-    if os.path.isfile(path):
-        return path
-    archive_path = os.path.join(ESPHOME_DIR, "archive", filename)
-    if os.path.isfile(archive_path):
-        return archive_path
-    return path
+    primary = safe_join(ESPHOME_DIR, filename)
+    if os.path.isfile(primary):
+        return primary
+    archive = safe_join(ESPHOME_DIR, os.path.join("archive", filename))
+    if os.path.isfile(archive):
+        return archive
+    return primary
 
 
 def _run(cmd: list[str], timeout: int = 120, cwd: str | None = None) -> str:
@@ -136,10 +146,12 @@ def list_devices() -> str:
 
 
 def validate(device: str) -> str:
-    """Validate an ESPHome device config."""
-    yaml_path = _device_yaml_path(device)
+    try:
+        yaml_path = _device_yaml_path(device)
+    except ValueError as e:
+        return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
-        return f"Device config not found: {yaml_path}"
+        return f"Device config not found: {os.path.basename(yaml_path)}"
     return _run([ESPHOME_BIN, "config", yaml_path])
 
 
@@ -160,10 +172,12 @@ def flash(device: str) -> str:
 
 
 def logs(device: str, num_lines: int = 50) -> str:
-    """Get recent logs from an ESPHome device."""
-    yaml_path = _device_yaml_path(device)
+    try:
+        yaml_path = _device_yaml_path(device)
+    except ValueError as e:
+        return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
-        return f"Device config not found: {yaml_path}"
+        return f"Device config not found: {os.path.basename(yaml_path)}"
     output = _run(
         ["timeout", "15", ESPHOME_BIN, "logs", yaml_path],
         timeout=30,
