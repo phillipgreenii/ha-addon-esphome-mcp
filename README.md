@@ -6,6 +6,13 @@ MCP (Model Context Protocol) server that exposes ESPHome operations as
 tools for [Claude Code](https://claude.ai/code). Runs as a Home
 Assistant add-on with direct filesystem access — no SSH required.
 
+## Upgrading from 1.0.0?
+
+This release moves ESPHome data from `/config/esphome/` to `/share/esphome/`
+and changes the default transport from direct HTTP on port 8099 to HA
+ingress. See [esphome-mcp/DOCS.md](esphome-mcp/DOCS.md#migration-from-100)
+for the migration steps before you upgrade.
+
 ## Quick Start
 
 1. Add this repository as a custom add-on repository in Home Assistant:
@@ -62,9 +69,9 @@ Assistant add-on with direct filesystem access — no SSH required.
 ## Architecture
 
 ```text
-Claude Code (desktop)  --HTTP-->  HA Add-on (MCP Server)  --local-->  ESPHome CLI
-                                       |
-                                  /config/esphome/  (direct filesystem access)
+Claude Code (desktop)  --ingress-->  HA Add-on (MCP Server)  --local-->  ESPHome CLI
+                                          |
+                                     /share/esphome/  (direct filesystem access)
 ```
 
 See [esphome-mcp/DOCS.md](esphome-mcp/DOCS.md) for full documentation.
