@@ -61,5 +61,5 @@ bashio::log.info "compile_enabled=${COMPILE_ENABLED} flash_enabled=${FLASH_ENABL
 bashio::log.info "max_concurrent_compiles=${MAX_CONCURRENT_COMPILES} body_mb=${MAX_BODY_MB} file_mb=${MAX_FILE_MB}"
 bashio::log.info "Starting ESPHome MCP Server on ${MCP_BIND}:8099 (ESPHOME_DIR=${ESPHOME_DIR})"
 
-# tini + s6-setuidgid land in Task 17; for now, just exec python.
-exec python3 -m server.main
+# Drop privileges and let tini handle PID 1 (signal forwarding + reaping).
+exec s6-setuidgid esphomemcp tini -g -- python3 -m server.main
