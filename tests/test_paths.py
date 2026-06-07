@@ -60,6 +60,28 @@ class TestSafeJoin:
         with pytest.raises(ContainmentError):
             safe_join(str(tmp_path), "subdir/newfile.yaml")
 
+    def test_nonexistent_base_directory_accepted(self, tmp_path):
+        """When base itself does not exist, safe_join should still validate
+        the lexical containment and stop walking at base — not climb above."""
+        base = tmp_path / "does_not_exist_yet"
+        # Do NOT mkdir base. Caller will mkdir later.
+        result = safe_join(str(base), "newfile.yaml")
+        # Result should be under base lexically
+        assert result.endswith("newfile.yaml")
+        assert "does_not_exist_yet" in result
+
+    def test_returns_realpath(self, tmp_path):
+        """safe_join returns the resolved path so callers don't re-traverse
+        symlinks at I/O time."""
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        # Within-base symlink: archive -> real
+        (tmp_path / "archive").symlink_to(real_dir)
+        result = safe_join(str(tmp_path), "archive/file.yaml")
+        # Result should resolve the symlink
+        assert "real" in result
+        assert "archive" not in result.split(os.sep)[-2:]
+
 
 class TestSafeFilename:
     def test_simple(self):

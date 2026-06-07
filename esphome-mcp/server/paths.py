@@ -23,6 +23,11 @@ def safe_join(base: str, user_path: str) -> str:
     Refuses: empty paths, null bytes, absolute paths, paths whose normalized
     form escapes base, paths that traverse through symlinks (parent or leaf)
     that resolve outside base.
+
+    Returns the realpath of the joined result, so callers receive a fully-
+    resolved path. This narrows but does not eliminate TOCTOU: a symlink
+    swap between this call and the caller's I/O can still redirect access.
+    Use O_NOFOLLOW for paranoid callers.
     """
     if not user_path or "\x00" in user_path:
         raise ContainmentError("empty or null-containing path")
@@ -47,12 +52,18 @@ def safe_join(base: str, user_path: str) -> str:
                     f"symlink escapes base via {walker!r}"
                 )
             break
+        if walker == base_real:
+            # Reached base without finding an existing ancestor. Either base
+            # itself does not exist yet (acceptable — caller may mkdir it) or
+            # the candidate is at the base level. Either way, containment was
+            # already proven by _is_inside above; stop walking.
+            break
         parent = os.path.dirname(walker)
         if parent == walker:
             break
         walker = parent
 
-    return candidate
+    return os.path.realpath(candidate)
 
 
 def safe_filename(name: str) -> str:
