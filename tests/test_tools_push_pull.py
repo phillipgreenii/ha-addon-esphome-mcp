@@ -58,3 +58,45 @@ class TestPushFiles:
         from server import tools
         result = tools.push_files({"big.yaml": "x" * 1000})
         assert "REJECTED" in result
+
+
+class TestPullFiles:
+    def test_pull_existing(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "device.yaml").write_text("esphome:\n  name: x\n")
+        result = tools.pull_files(["device.yaml"])
+        assert "device.yaml" in result
+        assert result["device.yaml"].startswith("esphome:")
+
+    def test_pull_all(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "a.yaml").write_text("a: 1\n")
+        (esphome_dir / "b.yaml").write_text("b: 2\n")
+        result = tools.pull_files(None)
+        assert {"a.yaml", "b.yaml"} <= set(result.keys())
+
+    def test_pull_skips_secrets_in_all(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "secrets.yaml").write_text("pw: hunter2\n")
+        result = tools.pull_files(None)
+        assert "secrets.yaml" not in result
+
+    def test_pull_secrets_by_name_blocked(self, esphome_dir):
+        """Even when explicitly requested, secrets.yaml is filtered."""
+        from server import tools
+        (esphome_dir / "secrets.yaml").write_text("pw: hunter2\n")
+        result = tools.pull_files(["secrets"])
+        assert "secrets.yaml" not in result
+        assert result == {}
+
+    @pytest.mark.parametrize(
+        "evil",
+        ["../configuration", "../../escape", "foo/../../secrets", "/absolute"],
+    )
+    def test_pull_traversal_rejected(self, esphome_dir, evil):
+        from server import tools
+        outside = esphome_dir.parent / "configuration.yaml"
+        outside.write_text("SENSITIVE\n")
+        result = tools.pull_files([evil])
+        for v in result.values():
+            assert "SENSITIVE" not in v
