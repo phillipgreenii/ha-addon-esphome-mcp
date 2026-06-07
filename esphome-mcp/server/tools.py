@@ -14,7 +14,7 @@ import yaml
 
 log = logging.getLogger("esphome-mcp")
 
-ESPHOME_DIR = os.environ.get("ESPHOME_DIR", "/config/esphome")
+ESPHOME_DIR = os.environ.get("ESPHOME_DIR", "/share/esphome")
 ESPHOME_BIN = "esphome"
 
 FORBIDDEN_FILES = {"secrets.yaml", ".secret.yaml"}

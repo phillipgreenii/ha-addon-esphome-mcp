@@ -1,27 +1,40 @@
 name: ESPHome MCP Server
-version: 1.0.0
+version: 1.1.0
 slug: esphome-mcp
 description: >-
   MCP (Model Context Protocol) server exposing ESPHome operations as tools
-  for Claude Code. Runs ESPHome commands locally on Home Assistant with
-  direct filesystem access — no SSH required.
-url: https://github.com/bberrevoets/ha-addon-esphome-mcp
+  for Claude Code. Runs ESPHome commands locally on Home Assistant.
+url: https://github.com/phillipgreenii/ha-addon-esphome-mcp
 arch:
   - aarch64
   - amd64
-ports:
-  8099/tcp: 8099
-ports_description:
-  8099/tcp: MCP Streamable HTTP endpoint
-map:
-  - config:rw
-options:
-  auth_token: ""
-schema:
-  auth_token: str
 startup: application
 boot: auto
-init: false
+# ingress is the default transport; HA's ingress proxy provides TLS + login.
+# Direct port 8099 access is OFF by default — set `ports:` back if you need
+# LAN access AND have a TLS-terminating proxy.
+ingress: true
+ingress_port: 8099
+ingress_entry: /
 host_network: false
-ingress: false
-panel_icon: mdi:chip
+homeassistant_api: false
+hassio_api: false
+# Narrower than `config:rw` — we only need our own slice of /share.
+map:
+  - share:rw
+# Supervisor watchdog: restart if /health stops responding.
+watchdog: "http://[HOST]:[PORT:8099]/health"
+options:
+  auth_token: ""
+  compile_enabled: false
+  flash_enabled: false
+  max_concurrent_compiles: 1
+  max_body_mb: 8
+  max_file_mb: 1
+schema:
+  auth_token: password
+  compile_enabled: bool
+  flash_enabled: bool
+  max_concurrent_compiles: int(1,8)
+  max_body_mb: int(1,64)
+  max_file_mb: int(1,16)
