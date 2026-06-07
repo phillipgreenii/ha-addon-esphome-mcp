@@ -175,11 +175,10 @@ def logs(device: str, num_lines: int = 50) -> str:
 
 
 def push_files(files: dict[str, str]) -> str:
-    """Write YAML files to the ESPHome config directory.
+    """Write YAML files to the ESPHome config directory."""
+    from .config import settings
+    from .paths import ContainmentError, safe_join
 
-    Args:
-        files: Dict mapping filename to YAML content.
-    """
     results = []
     for filename, content in files.items():
         if _is_forbidden(filename):
@@ -188,17 +187,26 @@ def push_files(files: dict[str, str]) -> str:
         if not filename.endswith(".yaml"):
             results.append(f"{filename}: REJECTED (only .yaml files allowed)")
             continue
+        if len(content.encode("utf-8")) > settings.max_file_bytes:
+            results.append(
+                f"{filename}: REJECTED (exceeds max file size "
+                f"{settings.max_file_bytes} bytes)"
+            )
+            continue
 
-        # Support archive/ subdirectory
-        target = os.path.join(ESPHOME_DIR, filename)
+        try:
+            target = safe_join(ESPHOME_DIR, filename)
+        except ContainmentError as e:
+            results.append(f"{filename}: REJECTED (unsafe path: {e})")
+            continue
+
         os.makedirs(os.path.dirname(target), exist_ok=True)
-
         try:
             with open(target, "w", encoding="utf-8", newline="\n") as f:
                 f.write(content)
             results.append(f"{filename}: OK")
-        except OSError as e:
-            results.append(f"{filename}: ERROR ({e})")
+        except OSError:
+            results.append(f"{filename}: ERROR (write failed)")
 
     return "Push results:\n" + "\n".join(results)
 
