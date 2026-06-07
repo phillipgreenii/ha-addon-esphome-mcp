@@ -46,7 +46,7 @@ auth_token: "my-secret-token"
      "mcpServers": {
        "esphome": {
          "type": "http",
-         "url": "http://<your-ha-host>:8099/mcp",
+         "url": "https://<your-ha-host>/api/hassio_ingress/<ingress-token>/mcp",
          "headers": {
            "Authorization": "Bearer ${ESPHOME_MCP_TOKEN}"
          }
@@ -54,6 +54,8 @@ auth_token: "my-secret-token"
      }
    }
    ```
+
+   > The exact ingress URL is shown in the add-on's "Open Web UI" link in the HA UI; copy it from there. `${ESPHOME_MCP_TOKEN}` is the client-side shell variable name; the server reads it from `ESPHOME_MCP_AUTH_TOKEN` inside the container.
 
 6. Restart Claude Code and verify the connection with `/mcp`.
 
@@ -96,8 +98,11 @@ upgrading, move your YAML configs:
 ```bash
 # From the HA host shell or SSH add-on:
 mkdir -p /share/esphome
-mv /config/esphome/* /share/esphome/
+mv /config/esphome/* /share/esphome/ 2>/dev/null || true
+mv /config/esphome/.[!.]* /share/esphome/ 2>/dev/null || true
 ```
+
+> The second `mv` catches dotfile-prefixed entries like `.esphome/` (PlatformIO/build cache). Without it, ESPHome will silently re-download toolchains on the next compile.
 
 The default transport also changed from direct HTTP on port 8099 to HA
 ingress. Update your MCP client's `mcp.json` to use the ingress URL shown
@@ -166,5 +171,12 @@ network you do not fully control.
 
 ## Network
 
-The add-on listens on port **8099** (TCP). Make sure this port is
-accessible from your development machine.
+By default, the add-on does **not** expose any TCP port on the host. All
+traffic flows through Home Assistant ingress (`ingress: true` in
+`config.yaml`), which provides TLS at the HA edge and routes to the
+add-on's internal port 8099.
+
+If you need LAN access from a host that cannot use the HA ingress URL,
+add `ports: 8099/tcp: 8099` to `config.yaml` and front it with a
+TLS-terminating reverse proxy. The bearer token alone is not protection
+against a network attacker who can see plaintext HTTP.
