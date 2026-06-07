@@ -6,8 +6,9 @@ All notable changes to this project will be documented in this file.
 
 - **Bert Berrevoets** — Project author
 - **Claude Code** — AI-assisted development
+- **phillipgreenii** — 1.1.0 security hardening + HA-conventions fork
 
-## 1.1.0
+## [1.1.0] - 2026-06-07
 
 ### Action required on upgrade
 

@@ -50,6 +50,8 @@ for the migration steps before you upgrade.
    it from there. Bearer auth is kept as defense-in-depth — HA ingress also
    protects the endpoint with the operator's HA login.)
 
+   > Note: `ESPHOME_MCP_TOKEN` here is the client-side shell variable you choose; the server reads `ESPHOME_MCP_AUTH_TOKEN` inside the container. The two are not required to share a name.
+
 6. Restart Claude Code and verify with `/mcp`.
 
 ## Tools
@@ -132,4 +134,4 @@ network you do not fully control.
 
 ## License
 
-[MIT](LICENSE) — Berrevoets Systems
+[MIT](LICENSE) — Original copyright 2026 Berrevoets Systems; 1.1.0 hardening fork maintained by phillipgreenii.
