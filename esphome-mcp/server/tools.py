@@ -212,34 +212,34 @@ def push_files(files: dict[str, str]) -> str:
 
 
 def pull_files(filenames: list[str] | None = None) -> dict[str, str]:
-    """Read YAML files from the ESPHome config directory.
+    """Read YAML files from the ESPHome config directory."""
+    from .paths import ContainmentError, safe_join
 
-    Args:
-        filenames: Optional list of filenames to pull. If None, pulls all.
-
-    Returns:
-        Dict mapping filename to YAML content.
-    """
-    result = {}
+    result: dict[str, str] = {}
+    paths: list[str] = []
 
     if filenames is None:
-        # Pull all YAML files
         paths = sorted(glob.glob(os.path.join(ESPHOME_DIR, "*.yaml")))
         archive_dir = os.path.join(ESPHOME_DIR, "archive")
         if os.path.isdir(archive_dir):
             paths += sorted(glob.glob(os.path.join(archive_dir, "*.yaml")))
     else:
-        paths = []
         for fn in filenames:
             if not fn.endswith(".yaml"):
                 fn = f"{fn}.yaml"
-            path = os.path.join(ESPHOME_DIR, fn)
-            if os.path.isfile(path):
-                paths.append(path)
-            else:
-                archive_path = os.path.join(ESPHOME_DIR, "archive", fn)
-                if os.path.isfile(archive_path):
-                    paths.append(archive_path)
+            try:
+                p = safe_join(ESPHOME_DIR, fn)
+            except ContainmentError:
+                continue
+            if os.path.isfile(p):
+                paths.append(p)
+                continue
+            try:
+                p_archive = safe_join(ESPHOME_DIR, os.path.join("archive", fn))
+            except ContainmentError:
+                continue
+            if os.path.isfile(p_archive):
+                paths.append(p_archive)
 
     for path in paths:
         if _is_forbidden(path):
@@ -248,8 +248,8 @@ def pull_files(filenames: list[str] | None = None) -> dict[str, str]:
         try:
             with open(path, encoding="utf-8") as f:
                 result[rel] = f.read()
-        except OSError as e:
-            result[rel] = f"ERROR: {e}"
+        except OSError:
+            result[rel] = "ERROR: could not read file"
 
     return result
 
