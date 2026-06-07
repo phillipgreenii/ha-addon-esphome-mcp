@@ -7,6 +7,67 @@ All notable changes to this project will be documented in this file.
 - **Bert Berrevoets** — Project author
 - **Claude Code** — AI-assisted development
 
+## 1.1.0
+
+### Security
+
+This release closes the findings from a third-party review of v1.0.0.
+Operators should update and rotate their auth tokens.
+
+#### Fixed
+- **Critical:** Path traversal in `push_files` / `pull_files`
+  (could overwrite or read arbitrary `.yaml` under `/config`). Data root
+  also moved to `/share/esphome` so the Supervisor mount is narrower.
+- **Critical:** Sanitized YAML parse exceptions; FS paths no longer leak
+  to clients.
+- **High:** Auth token logged once on first generation, not on every boot.
+  Stored at `/data/auth_token` mode 0600.
+- **High:** Server fails closed (HTTP 503) when no auth token is configured.
+- **High:** Constant-time bearer token comparison.
+- **High:** Body-size cap (rejects chunked transfer encoding bypass).
+- **High:** `_device_yaml_path` no longer accepts absolute paths or `..`.
+- **Medium:** Font uploads restricted to known font extensions and base64
+  validation.
+- **Medium:** Per-file size limits.
+- **Medium:** Concurrent compile/flash invocations bounded by a
+  loop-scoped semaphore.
+- **Medium:** Container drops to unprivileged `esphomemcp` (UID 10001) via
+  `s6-setuidgid`; PID 1 is `tini`.
+- **Medium:** AppArmor profile shipped (profile name matches slug).
+- **Medium:** Runtime dependencies pinned with hash verification (per-arch
+  lockfiles).
+
+#### Mitigated, not eliminated
+- `compile`/`flash` default to disabled. When enabled they remain a
+  remote-code-execution surface via PlatformIO `extra_scripts`. See
+  README "Security" for the explicit threat model.
+- OTA flash, when enabled, can reach any device whose OTA password is in
+  `secrets.yaml`.
+
+### Added
+- `compile_enabled`, `flash_enabled`, `max_concurrent_compiles`,
+  `max_body_mb`, `max_file_mb` add-on options.
+- `/health` endpoint and Supervisor `watchdog`.
+- HA ingress as the default transport (`ingress: true`); direct port 8099
+  removed from default config.
+- pytest suite with regression tests for every fix.
+- GitHub Actions CI: pytest, per-arch lockfile drift, add-on linter,
+  hadolint.
+
+### Changed
+- `auth_token` option type changed from `str` to `password` (HA UI masks it).
+- `map: config:rw` → `map: share:rw` (ESPHome data lives in
+  `/share/esphome` now).
+- `init: false` removed (defaults to true, s6-overlay handles PID 1
+  alongside `tini`).
+- `panel_icon` removed (was dead config; ingress now provides the side
+  panel entry).
+
+### Removed
+- Dead `host="0.0.0.0"` kwarg on `FastMCP(...)`.
+- Hardcoded `BUILD_ARCH: aarch64` in `build.yaml` (Supervisor injects
+  per-arch automatically).
+
 ## [1.0.0] - 2026-03-17
 
 ### Added
