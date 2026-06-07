@@ -2,7 +2,6 @@
 
 profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
-  #include <abstractions/python>
 
   # Capabilities — chown for the run.sh drop-privs path; setuid/setgid for
   # s6-setuidgid.
@@ -19,11 +18,15 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /opt/run.sh ix,
   /opt/server/** r,
   /usr/bin/python3* ix,
-  /usr/bin/tini ix,
+  /sbin/tini ix,
   /usr/bin/s6-setuidgid ix,
   /usr/local/bin/esphome ix,
   /usr/local/bin/platformio ix,
   /command/s6-setuidgid ix,
+  /usr/bin/with-contenv ix,
+  /usr/bin/bashio ix,
+  /usr/lib/bashio/** r,
+  /init ix,
 
   # Python site-packages — required for ESPHome imports
   /usr/lib/python3.*/** r,
@@ -45,6 +48,13 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   deny umount,
   deny /proc/sysrq-trigger w,
   deny /sys/** w,
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny /proc/*/mem rw,
+  deny /proc/kcore rw,
+  deny /sys/kernel/security/** rwx,
 
   signal (send,receive) peer=esphome-mcp,
 }
