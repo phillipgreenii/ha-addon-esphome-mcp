@@ -3,6 +3,7 @@
 All tools operate locally on the Home Assistant filesystem — no SSH needed.
 """
 
+import asyncio
 import base64
 import glob
 import logging
@@ -19,6 +20,12 @@ ESPHOME_BIN = "esphome"
 FORBIDDEN_FILES = {"secrets.yaml", ".secret.yaml"}
 
 ALLOWED_FONT_EXTENSIONS = {".ttf", ".otf", ".bdf", ".pcf", ".woff", ".woff2"}
+
+_DISABLED_MSG = (
+    "{action} is disabled. Enable it by setting the add-on option "
+    "{option} to true (see DOCS.md for security implications). Changes "
+    "take effect after the add-on is restarted."
+)
 
 
 def _is_allowed_font(name: str) -> bool:
@@ -161,20 +168,46 @@ def validate(device: str) -> str:
     return _run([ESPHOME_BIN, "config", yaml_path])
 
 
-def compile_device(device: str) -> str:
-    """Compile ESPHome firmware for a device."""
-    yaml_path = _device_yaml_path(device)
+async def compile_device(device: str) -> str:
+    """Compile ESPHome firmware for a device. Async; semaphore-gated."""
+    from .config import settings
+    from .limits import get_compile_semaphore
+
+    if not settings.compile_enabled:
+        return _DISABLED_MSG.format(action="compile", option="compile_enabled")
+    try:
+        yaml_path = _device_yaml_path(device)
+    except ValueError as e:
+        return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
-        return f"Device config not found: {yaml_path}"
-    return _run([ESPHOME_BIN, "compile", yaml_path], timeout=300)
+        return f"Device config not found: {os.path.basename(yaml_path)}"
+
+    sem = get_compile_semaphore()
+    async with sem:
+        return await asyncio.to_thread(
+            _run, [ESPHOME_BIN, "compile", yaml_path], timeout=300
+        )
 
 
-def flash(device: str) -> str:
-    """OTA flash a device."""
-    yaml_path = _device_yaml_path(device)
+async def flash(device: str) -> str:
+    """OTA flash a device. Async; semaphore-gated."""
+    from .config import settings
+    from .limits import get_compile_semaphore
+
+    if not settings.flash_enabled:
+        return _DISABLED_MSG.format(action="flash", option="flash_enabled")
+    try:
+        yaml_path = _device_yaml_path(device)
+    except ValueError as e:
+        return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
-        return f"Device config not found: {yaml_path}"
-    return _run([ESPHOME_BIN, "run", yaml_path, "--no-logs"], timeout=600)
+        return f"Device config not found: {os.path.basename(yaml_path)}"
+
+    sem = get_compile_semaphore()
+    async with sem:
+        return await asyncio.to_thread(
+            _run, [ESPHOME_BIN, "run", yaml_path, "--no-logs"], timeout=600
+        )
 
 
 def logs(device: str, num_lines: int = 50) -> str:

@@ -47,23 +47,28 @@ def esphome_validate(device: str) -> str:
 
 
 @mcp.tool()
-def esphome_compile(device: str) -> str:
+async def esphome_compile(device: str) -> str:
     """Compile ESPHome firmware for a device.
+
+    Disabled by default. Enable via the `compile_enabled` add-on option.
+    Concurrency is bounded by `max_concurrent_compiles`.
 
     Args:
         device: Device name (e.g. 'statusdisplay') or YAML filename.
     """
-    return tools.compile_device(device)
+    return await tools.compile_device(device)
 
 
 @mcp.tool()
-def esphome_flash(device: str) -> str:
+async def esphome_flash(device: str) -> str:
     """OTA flash a device.
+
+    Disabled by default. Enable via the `flash_enabled` add-on option.
 
     Args:
         device: Device name (e.g. 'statusdisplay') or YAML filename.
     """
-    return tools.flash(device)
+    return await tools.flash(device)
 
 
 @mcp.tool()
