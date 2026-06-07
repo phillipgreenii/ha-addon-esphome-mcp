@@ -66,7 +66,8 @@ def _run(cmd: list[str], timeout: int = 120, cwd: str | None = None) -> str:
 
 
 def _parse_device_info(yaml_path: str) -> dict:
-    """Parse basic device info from a YAML file."""
+    """Parse basic device info from a YAML file. Errors are summarized;
+    full exception detail is never returned to the client."""
     try:
         with open(yaml_path, encoding="utf-8") as f:
             class SecretLoader(yaml.SafeLoader):
@@ -78,18 +79,19 @@ def _parse_device_info(yaml_path: str) -> dict:
             SecretLoader.add_constructor("!secret", secret_constructor)
             data = yaml.load(f, Loader=SecretLoader)
 
-        esphome_section = data.get("esphome", {})
+        esphome_section = (data or {}).get("esphome", {})
         return {
             "name": esphome_section.get("name", "unknown"),
             "friendly_name": esphome_section.get("friendly_name", ""),
             "file": os.path.basename(yaml_path),
         }
-    except Exception as e:
+    except Exception:
+        log.exception("parse failed for %s", os.path.basename(yaml_path))
         return {
             "name": "error",
             "friendly_name": "",
             "file": os.path.basename(yaml_path),
-            "error": str(e),
+            "error": "could not parse YAML",
         }
 
 
