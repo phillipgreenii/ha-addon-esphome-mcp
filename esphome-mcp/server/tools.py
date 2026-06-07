@@ -8,6 +8,7 @@ import base64
 import glob
 import logging
 import os
+import re
 import subprocess
 
 import yaml
@@ -26,6 +27,57 @@ _DISABLED_MSG = (
     "{option} to true (see DOCS.md for security implications). Changes "
     "take effect after the add-on is restarted."
 )
+
+# Catches !include, !include_dir_list, !include_dir_named, !include_dir_merge_list,
+# !include_dir_merge_named — any ESPHome include directive that takes a path.
+_INCLUDE_DIRECTIVE_RE = re.compile(
+    r"!include(?:_dir_(?:list|named|merge_list|merge_named))?\s+([^\s#]+)"
+)
+
+
+def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
+    """Return a list of unsafe !include paths in the YAML content.
+
+    `target_yaml_path` is where the YAML will be written. Includes are resolved
+    relative to that file's directory. We reject:
+      - absolute paths (including the C:\\ form on Windows)
+      - paths whose normalized form escapes ESPHOME_DIR
+      - paths that pass containment but would target ESPHOME_DIR's own
+        forbidden files (secrets.yaml etc.)
+    """
+    from .paths import ContainmentError, safe_join
+
+    yaml_dir = os.path.dirname(target_yaml_path)
+    unsafe = []
+    for match in _INCLUDE_DIRECTIVE_RE.finditer(content):
+        raw = match.group(1).strip().strip("\"'")
+        if not raw:
+            continue
+        # Reject absolute paths outright.
+        if os.path.isabs(raw):
+            unsafe.append(raw)
+            continue
+        # Resolve the include path relative to the yaml file's directory,
+        # then re-express relative to ESPHOME_DIR for safe_join.
+        absolute_target = os.path.normpath(os.path.join(yaml_dir, raw))
+        try:
+            rel_to_base = os.path.relpath(absolute_target, ESPHOME_DIR)
+        except ValueError:
+            # Different drive (Windows) — definitely outside.
+            unsafe.append(raw)
+            continue
+        if rel_to_base.startswith(".."):
+            unsafe.append(raw)
+            continue
+        try:
+            safe_join(ESPHOME_DIR, rel_to_base)
+        except ContainmentError:
+            unsafe.append(raw)
+            continue
+        # Containment passed; also block include of forbidden files by name.
+        if _is_forbidden(os.path.basename(rel_to_base)):
+            unsafe.append(raw)
+    return unsafe
 
 
 def _is_allowed_font(name: str) -> bool:
@@ -251,6 +303,16 @@ def push_files(files: dict[str, str]) -> str:
             target = safe_join(ESPHOME_DIR, filename)
         except ContainmentError as e:
             results.append(f"{filename}: REJECTED (unsafe path: {e})")
+            continue
+
+        # Reject YAML that contains !include directives pointing outside
+        # ESPHOME_DIR. ESPHome's YAML loader follows these at validate/compile
+        # time, so an unchecked include is an arbitrary-file read primitive.
+        unsafe = _scan_unsafe_includes(content, target)
+        if unsafe:
+            results.append(
+                f"{filename}: REJECTED (unsafe !include path(s): {unsafe})"
+            )
             continue
 
         os.makedirs(os.path.dirname(target), exist_ok=True)
