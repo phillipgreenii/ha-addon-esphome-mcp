@@ -9,6 +9,8 @@ from mcp.server.fastmcp import FastMCP
 
 from . import tools
 from .auth import BearerAuthMiddleware
+from .config import settings
+from .limits import BodySizeLimitMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -139,7 +141,10 @@ def esphome_pull_fonts(filenames: list[str] | None = None) -> str:
 # ASGI app with auth middleware
 # ---------------------------------------------------------------------------
 app = mcp.streamable_http_app()
+# Inner: auth (runs second)
 app.add_middleware(BearerAuthMiddleware)
+# Outer: body-size limit (runs first — cheap reject before auth work)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
 
 
 if __name__ == "__main__":
