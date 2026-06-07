@@ -9,6 +9,19 @@ All notable changes to this project will be documented in this file.
 
 ## 1.1.0
 
+### Action required on upgrade
+
+- **Move ESPHome configs.** Data root changed from `/config/esphome/` to
+  `/share/esphome/`. Move your existing YAML and font files before
+  starting v1.1.0; see DOCS.md "Migration from 1.0.0" for the exact
+  commands. Until you migrate, `esphome_list_devices` will return empty.
+- **Update MCP client URL.** Default transport switched to HA ingress.
+  Your `.mcp.json` must point at the ingress URL shown in the add-on's
+  "Open Web UI" link, not `http://<host>:8099/mcp`.
+- **Rotate auth token if restored from backup.** `/data/auth_token` is
+  included in Supervisor backups. If you restored a snapshot onto a new
+  HA instance, delete `/data/auth_token` and restart the add-on.
+
 ### Security
 
 This release closes the findings from a third-party review of v1.0.0.

@@ -21,7 +21,6 @@ log = logging.getLogger("esphome-mcp")
 
 mcp = FastMCP(
     name="esphome",
-    host="0.0.0.0",
     stateless_http=True,
 )
 
@@ -91,7 +90,7 @@ def esphome_logs(device: str, num_lines: int = 50) -> str:
 def esphome_push_files(files: dict[str, str]) -> str:
     """Push YAML config files to the ESPHome directory on Home Assistant.
 
-    Writes files to /config/esphome/. Rejects secrets.yaml.
+    Writes files to /share/esphome/. Rejects secrets.yaml.
 
     Args:
         files: Dict mapping filename to YAML content.
