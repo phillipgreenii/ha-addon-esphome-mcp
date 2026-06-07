@@ -1,0 +1,66 @@
+"""Filesystem containment helpers.
+
+All user-supplied paths must pass through safe_join (for relative paths under a
+base) or safe_filename (for basenames only) before being used for I/O.
+"""
+import os
+
+
+class ContainmentError(ValueError):
+    """Raised when a user-supplied path escapes its allowed base."""
+
+
+def _is_inside(base_real: str, candidate_real: str) -> bool:
+    return (
+        candidate_real == base_real
+        or candidate_real.startswith(base_real + os.sep)
+    )
+
+
+def safe_join(base: str, user_path: str) -> str:
+    """Join user_path onto base, refusing anything that escapes base.
+
+    Refuses: empty paths, null bytes, absolute paths, paths whose normalized
+    form escapes base, paths that traverse through symlinks (parent or leaf)
+    that resolve outside base.
+    """
+    if not user_path or "\x00" in user_path:
+        raise ContainmentError("empty or null-containing path")
+    if os.path.isabs(user_path):
+        raise ContainmentError(f"absolute path not allowed: {user_path!r}")
+
+    base_real = os.path.realpath(base)
+    candidate = os.path.normpath(os.path.join(base_real, user_path))
+
+    if not _is_inside(base_real, candidate):
+        raise ContainmentError(f"path escapes base: {user_path!r}")
+
+    # Walk every existing ancestor (including the candidate itself if present)
+    # and ensure each resolves inside base. Catches symlinked parents whose
+    # leaf does not yet exist.
+    walker = candidate
+    while True:
+        if os.path.lexists(walker):
+            real = os.path.realpath(walker)
+            if not _is_inside(base_real, real):
+                raise ContainmentError(
+                    f"symlink escapes base via {walker!r}"
+                )
+            break
+        parent = os.path.dirname(walker)
+        if parent == walker:
+            break
+        walker = parent
+
+    return candidate
+
+
+def safe_filename(name: str) -> str:
+    """Validate a single filename (no directory components allowed)."""
+    if not name or "\x00" in name:
+        raise ContainmentError("empty or null-containing filename")
+    if name in (".", ".."):
+        raise ContainmentError(f"invalid filename: {name!r}")
+    if os.sep in name or (os.altsep and os.altsep in name):
+        raise ContainmentError(f"filename must not contain separators: {name!r}")
+    return name
