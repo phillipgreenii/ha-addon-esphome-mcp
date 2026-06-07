@@ -18,6 +18,12 @@ ESPHOME_BIN = "esphome"
 
 FORBIDDEN_FILES = {"secrets.yaml", ".secret.yaml"}
 
+ALLOWED_FONT_EXTENSIONS = {".ttf", ".otf", ".bdf", ".pcf", ".woff", ".woff2"}
+
+
+def _is_allowed_font(name: str) -> bool:
+    return any(name.lower().endswith(ext) for ext in ALLOWED_FONT_EXTENSIONS)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -269,60 +275,83 @@ def pull_files(filenames: list[str] | None = None) -> dict[str, str]:
 
 
 def push_fonts(files: dict[str, str]) -> str:
-    """Write font files to the ESPHome fonts directory.
+    from .config import settings
+    from .paths import ContainmentError, safe_filename
 
-    Args:
-        files: Dict mapping filename to base64-encoded content.
-    """
     fonts_dir = os.path.join(ESPHOME_DIR, "fonts")
     os.makedirs(fonts_dir, exist_ok=True)
 
     results = []
     for filename, b64_content in files.items():
-        target = os.path.join(fonts_dir, os.path.basename(filename))
         try:
-            data = base64.b64decode(b64_content)
+            name = safe_filename(os.path.basename(filename))
+        except ContainmentError as e:
+            results.append(f"{filename}: REJECTED (unsafe name: {e})")
+            continue
+        if name != filename:
+            results.append(f"{filename}: REJECTED (path components not allowed)")
+            continue
+        if not _is_allowed_font(name):
+            results.append(
+                f"{filename}: REJECTED (extension not in "
+                f"{sorted(ALLOWED_FONT_EXTENSIONS)})"
+            )
+            continue
+        try:
+            data = base64.b64decode(b64_content, validate=True)
+        except Exception:
+            results.append(f"{filename}: REJECTED (invalid base64)")
+            continue
+        if len(data) > settings.max_file_bytes:
+            results.append(
+                f"{filename}: REJECTED (exceeds max file size "
+                f"{settings.max_file_bytes} bytes)"
+            )
+            continue
+
+        target = os.path.join(fonts_dir, name)
+        try:
             with open(target, "wb") as f:
                 f.write(data)
             results.append(f"{filename}: OK ({len(data)} bytes)")
-        except Exception as e:
-            results.append(f"{filename}: ERROR ({e})")
+        except OSError:
+            results.append(f"{filename}: ERROR (write failed)")
 
     return "Font push results:\n" + "\n".join(results)
 
 
 def pull_fonts(filenames: list[str] | None = None) -> dict[str, str]:
-    """Read font files from the ESPHome fonts directory.
+    from .paths import ContainmentError, safe_filename
 
-    Args:
-        filenames: Optional list of font filenames. If None, pulls all.
-
-    Returns:
-        Dict mapping filename to base64-encoded content.
-    """
     fonts_dir = os.path.join(ESPHOME_DIR, "fonts")
-    result = {}
-
+    result: dict[str, str] = {}
     if not os.path.isdir(fonts_dir):
         return result
 
     if filenames is None:
-        paths = sorted(glob.glob(os.path.join(fonts_dir, "*")))
+        paths = sorted(
+            p for p in glob.glob(os.path.join(fonts_dir, "*"))
+            if os.path.isfile(p) and _is_allowed_font(p)
+        )
     else:
-        paths = [
-            os.path.join(fonts_dir, os.path.basename(fn))
-            for fn in filenames
-            if os.path.isfile(os.path.join(fonts_dir, os.path.basename(fn)))
-        ]
+        paths = []
+        for fn in filenames:
+            try:
+                name = safe_filename(os.path.basename(fn))
+            except ContainmentError:
+                continue
+            if not _is_allowed_font(name):
+                continue
+            p = os.path.join(fonts_dir, name)
+            if os.path.isfile(p):
+                paths.append(p)
 
     for path in paths:
-        if not os.path.isfile(path):
-            continue
         try:
             with open(path, "rb") as f:
                 data = f.read()
             result[os.path.basename(path)] = base64.b64encode(data).decode("ascii")
-        except OSError as e:
-            result[os.path.basename(path)] = f"ERROR: {e}"
+        except OSError:
+            result[os.path.basename(path)] = "ERROR: could not read file"
 
     return result
