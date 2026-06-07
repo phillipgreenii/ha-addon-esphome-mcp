@@ -1,0 +1,9 @@
+# Source of truth for runtime deps. Compiled to per-arch lockfiles via:
+#   uv pip compile esphome-mcp/requirements.txt.in --generate-hashes \
+#     --python-version 3.12 --python-platform <plat> \
+#     -o esphome-mcp/requirements.<arch>.lock
+
+mcp[cli]==1.9.0
+uvicorn==0.34.0
+pyyaml==6.0.3
+esphome==2026.5.3
