@@ -1,0 +1,50 @@
+#include <tunables/global>
+
+profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  # Capabilities — chown for the run.sh drop-privs path; setuid/setgid for
+  # s6-setuidgid.
+  capability dac_override,
+  capability dac_read_search,
+  capability chown,
+  capability fowner,
+  capability setuid,
+  capability setgid,
+  capability kill,
+
+  # Executables we actually run
+  /opt/** r,
+  /opt/run.sh ix,
+  /opt/server/** r,
+  /usr/bin/python3* ix,
+  /usr/bin/tini ix,
+  /usr/bin/s6-setuidgid ix,
+  /usr/local/bin/esphome ix,
+  /usr/local/bin/platformio ix,
+  /command/s6-setuidgid ix,
+
+  # Python site-packages — required for ESPHome imports
+  /usr/lib/python3.*/** r,
+  /usr/local/lib/python3.*/** r,
+
+  # Data + state
+  /tmp/** rwk,
+  /data/** rwk,
+  /share/esphome/** rwk,
+
+  # Network: outbound for ESPHome OTA + listening socket
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+
+  # Deny dangerous ops explicitly
+  deny ptrace,
+  deny mount,
+  deny umount,
+  deny /proc/sysrq-trigger w,
+  deny /sys/** w,
+
+  signal (send,receive) peer=esphome-mcp,
+}
