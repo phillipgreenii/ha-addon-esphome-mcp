@@ -191,3 +191,83 @@ class TestSequenceFormBypass:
         payload = "esphome:\n  name: x\nshared: !include sub/common.yaml\n"
         result = await tools.push_files({"good2.yaml": payload})
         assert "OK" in result
+
+
+class TestTaggedScalarBypass:
+    """Round-7 added _PLAIN_STR_TAGS to reject `!secret`/`!lambda`/etc
+    on INNER scalars inside !include mapping/sequence forms. Without
+    this hardening, an attacker could write
+        leak: !include
+          file: !secret real_path
+    and have ESPHome resolve `!secret real_path` at validate time to
+    whatever the operator stored in secrets.yaml — bypassing our
+    push-time path containment check. These tests pin the hardening
+    so a mutation that drops the _PLAIN_STR_TAGS check would be caught.
+    """
+
+    async def test_inner_secret_tag_in_mapping_file_rejected(self, esphome_dir):
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: !secret some_secret_path\n"
+        )
+        result = await tools.push_files({"pwn.yaml": payload})
+        assert "REJECTED" in result
+        # The rejection MUST come from the _PLAIN_STR_TAGS check, not
+        # from something else.
+        assert "non-plain tag on !include file value" in result
+        assert not (esphome_dir / "pwn.yaml").exists()
+
+    async def test_inner_lambda_tag_in_mapping_file_rejected(self, esphome_dir):
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: !lambda 'return std::string(\"x\");'\n"
+        )
+        result = await tools.push_files({"pwn.yaml": payload})
+        assert "REJECTED" in result
+        assert "non-plain tag" in result
+
+    async def test_inner_int_tag_in_mapping_file_rejected(self, esphome_dir):
+        """Even safe YAML-1.2 type tags (!!int, !!bool) get rejected
+        when they appear on the include file value — those wouldn't
+        normally be filename strings."""
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: !!int 42\n"
+        )
+        result = await tools.push_files({"pwn.yaml": payload})
+        assert "REJECTED" in result
+        assert "non-plain tag" in result
+
+    async def test_tagged_scalar_in_include_sequence_rejected(self, esphome_dir):
+        """Same check applies to sequence-form !include entries."""
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  - !secret bad\n"
+            "  - good.yaml\n"
+        )
+        result = await tools.push_files({"pwn.yaml": payload})
+        assert "REJECTED" in result
+        # The rejection comes from the sequence's tag-check, not the
+        # path-containment check, so the message should mention
+        # "non-plain or non-scalar sequence entry".
+        assert "non-plain" in result
+
+    async def test_plain_str_tag_inner_value_still_accepted(self, esphome_dir):
+        """!!str is in _PLAIN_STR_TAGS — explicit string tagging on
+        the inner value must still pass the tag check (then go on to
+        path validation, which rejects /etc/passwd as absolute)."""
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: !!str /etc/passwd\n"
+        )
+        result = await tools.push_files({"pwn.yaml": payload})
+        # Rejected, but for ABSOLUTE-PATH reasons, not tag reasons.
+        assert "REJECTED" in result
+        assert "non-plain tag" not in result, (
+            "rejection should come from path containment, not tag check"
+        )

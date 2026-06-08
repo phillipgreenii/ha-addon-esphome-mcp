@@ -171,8 +171,9 @@ network you do not fully control.
 - **Enable Supervisor's Watchdog toggle.** In the addon's Info tab in the
   HA UI, turn on "Watchdog". Combined with the Dockerfile `HEALTHCHECK`,
   this restarts the add-on automatically if `/health` stops responding.
-  (The Watchdog toggle defaults OFF because the `watchdog:` YAML key was
-  deprecated by the addon-linter; the operator action is needed once.)
+  (The toggle is operator-opt-in — Supervisor defaults it OFF regardless
+  of whether the addon ships a `watchdog:` YAML key, and the addon-linter
+  rejects that key anyway as obsolete. The one-time UI step is required.)
 
 ## Network
 
@@ -185,3 +186,10 @@ If you need LAN access from a host that cannot use the HA ingress URL,
 add `ports: 8099/tcp: 8099` to `config.yaml` and front it with a
 TLS-terminating reverse proxy. The bearer token alone is not protection
 against a network attacker who can see plaintext HTTP.
+
+**Do not change `MCP_BIND`.** The Dockerfile `HEALTHCHECK` probes
+`http://127.0.0.1:8099/health` from inside the container; the default
+`MCP_BIND=0.0.0.0` accepts IPv4 loopback. Setting `MCP_BIND` to an
+IPv6-only literal (e.g. `::1`) makes the HEALTHCHECK unreachable, which
+Supervisor will treat as unhealthy and (with the Watchdog toggle on)
+restart the addon in a loop.

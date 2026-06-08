@@ -9,7 +9,6 @@ import contextlib
 import glob
 import logging
 import os
-import re
 import signal
 
 import yaml
@@ -158,11 +157,17 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
     # `add_multi_constructor("!", ...)` — and ESPHome itself doesn't use
     # them, so reject defensively. Use the real YAML scanner (which knows
     # what a directive is) instead of a regex that false-positives on
-    # text like "%TAG" appearing inside a block scalar.
+    # text like "%TAG" appearing inside a block scalar. Directives only
+    # appear at the start of a document, so break on the first non-
+    # directive, non-stream-start token to bound worst-case cost.
     try:
         for token in yaml.scan(content):
             if isinstance(token, yaml.DirectiveToken):
                 return [f"REJECTED: unsupported YAML directive %{token.name}"]
+            if isinstance(token, (yaml.StreamStartToken, yaml.DocumentStartToken)):
+                continue
+            # First content token: we're past any directives. Stop.
+            break
     except yaml.YAMLError:
         # If the scanner can't tokenize, the full parse below will fail
         # too — let it produce the malformed-YAML rejection.
@@ -266,7 +271,17 @@ def _device_yaml_path(device: str) -> str:
     return primary
 
 
-_RUN_OUTPUT_TAIL_BYTES = 64 * 1024  # 64 KiB — last N bytes kept on overflow
+# 64 KiB — last N bytes of subprocess output kept on overflow. Intentionally
+# NOT a Settings field: this is a contract with the MCP framing layer
+# (a single tool response should fit in one MCP frame), not an operator
+# tunable. Bumping it should be done in code review, not via env vars.
+_RUN_OUTPUT_TAIL_BYTES = 64 * 1024
+# Prefixes returned by _run_async on a failure path. logs() and other
+# callers use `output.startswith(_RUN_ERROR_PREFIXES)` to short-circuit
+# the body-processing path so the operator sees the structured failure
+# header rather than a tail of the (possibly truncated) body.
+# "Command failed" matches both "Command failed (exit N): ..." and
+# "Command failed to start: ...".
 _RUN_ERROR_PREFIXES = ("Command failed", "Command timed out", "Command not found")
 _RUN_TRUNCATED_MARKER_PREFIX = "[... output truncated"
 
@@ -325,13 +340,13 @@ async def _run_async(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
-    except (
-        FileNotFoundError,
-        PermissionError,
-        IsADirectoryError,
-        NotADirectoryError,
-    ) as e:
+    except FileNotFoundError as e:
         return f"Command not found: {e}"
+    except (PermissionError, IsADirectoryError, NotADirectoryError) as e:
+        # Distinguish "could not start the process" from "binary missing"
+        # in the operator log. Both still match _RUN_ERROR_PREFIXES via
+        # the "Command failed" prefix below.
+        return f"Command failed to start: {e}"
 
     stdout = bytearray()
 
@@ -660,7 +675,12 @@ def pull_files(filenames: list[str] | None = None) -> dict[str, str]:
     return result
 
 
-_FONT_COUNT_CAP = 200  # defense against unbounded /share/esphome/fonts growth
+# Defense against unbounded /share/esphome/fonts growth (an authenticated
+# client could otherwise push many small valid fonts and fill the mount).
+# Intentionally NOT a Settings field — 200 is well above any realistic
+# ESPHome use; operators hitting this limit should clean up
+# /share/esphome/fonts/ rather than tune around it.
+_FONT_COUNT_CAP = 200
 
 
 def push_fonts(files: dict[str, str]) -> str:
@@ -680,8 +700,9 @@ def push_fonts(files: dict[str, str]) -> str:
         if existing_count >= _FONT_COUNT_CAP:
             results.append(
                 f"{filename}: REJECTED (font directory at cap of "
-                f"{_FONT_COUNT_CAP} files; delete some via the host shell "
-                f"before pushing more)"
+                f"{_FONT_COUNT_CAP} files; delete unused fonts from "
+                f"/share/esphome/fonts/ via the Samba or SSH add-on, "
+                f"then retry)"
             )
             continue
         try:

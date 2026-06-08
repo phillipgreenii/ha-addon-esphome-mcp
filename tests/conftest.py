@@ -50,19 +50,13 @@ def esphome_dir(tmp_path, monkeypatch, clean_modules):
 
 @pytest.fixture
 def fake_subprocess(monkeypatch):
-    """Patch subprocess.run AND asyncio.create_subprocess_exec to record calls."""
+    """Patch asyncio.create_subprocess_exec to record calls.
+
+    The sync `subprocess.run` patch was here historically when tools.py
+    had a sync `_run` helper; that helper was removed and nothing in the
+    server-side code path calls `subprocess.run` anymore.
+    """
     calls = []
-
-    class SyncResult:
-        returncode = 0
-        stdout = "ok"
-        stderr = ""
-
-    def fake_run(cmd, **kwargs):
-        calls.append({"cmd": list(cmd), "kwargs": kwargs})
-        return SyncResult()
-
-    monkeypatch.setattr("subprocess.run", fake_run)
 
     class FakeStream:
         def __init__(self, data: bytes = b"ok\n"):
