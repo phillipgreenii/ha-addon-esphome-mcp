@@ -77,3 +77,22 @@ class TestListDevicesContent:
         result = tools.list_devices()
         assert "ERROR" in result
         assert "broken.yaml" in result
+
+
+class TestListDevicesMainDirSecretsFilter:
+    def test_secrets_yaml_in_main_dir_filtered(self, esphome_dir):
+        """secrets.yaml planted directly in the ESPHome dir (not in
+        archive/) must be filtered out of list_devices output. The
+        archive-loop filter was covered; the main-loop filter wasn't."""
+        from server import tools
+        # Plant in main dir, NOT archive.
+        (esphome_dir / "secrets.yaml").write_text(
+            "wifi_password: hunter2\n"
+        )
+        (esphome_dir / "lamp.yaml").write_text(
+            "esphome:\n  name: lamp\n"
+        )
+        result = tools.list_devices()
+        assert "lamp" in result
+        assert "secrets" not in result
+        assert "hunter2" not in result
