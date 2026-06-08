@@ -1,5 +1,4 @@
 import importlib
-import os
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient, ASGITransport
@@ -44,24 +43,23 @@ class TestAuth:
         )
         assert r.status_code not in (401, 403)
 
-    async def test_token_read_at_request_time(self, client):
+    async def test_token_read_at_request_time(self, client, monkeypatch):
         # Rotate the env var in place; no reload of server.main
-        os.environ["ESPHOME_MCP_AUTH_TOKEN"] = "rotated"
-        try:
-            r = await client.post(
-                "/mcp",
-                headers={"Authorization": "Bearer rotated"},
-                content=b"{}",
-            )
-            assert r.status_code not in (401, 403)
-            r2 = await client.post(
-                "/mcp",
-                headers={"Authorization": "Bearer good-token"},
-                content=b"{}",
-            )
-            assert r2.status_code == 403
-        finally:
-            os.environ["ESPHOME_MCP_AUTH_TOKEN"] = "good-token"
+        monkeypatch.setenv("ESPHOME_MCP_AUTH_TOKEN", "rotated")
+        r = await client.post(
+            "/mcp",
+            headers={"Authorization": "Bearer rotated"},
+            content=b"{}",
+        )
+        assert r.status_code not in (401, 403)
+        # Old token should now fail
+        r2 = await client.post(
+            "/mcp",
+            headers={"Authorization": "Bearer good-token"},
+            content=b"{}",
+        )
+        assert r2.status_code == 403
+        # monkeypatch tears down automatically; no manual finally needed
 
 
 class TestFailClosed:

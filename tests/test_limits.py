@@ -47,9 +47,9 @@ class TestBodyLimit:
         )
         assert r.status_code == 413
 
-    async def test_chunked_without_content_length_rejected(self, client):
-        # Explicit chunked encoding without Content-Length must be refused;
-        # otherwise it bypasses the cap entirely.
+    async def test_chunked_transfer_encoding_rejected(self, client):
+        # Transfer-Encoding: chunked must be refused regardless of CL value;
+        # otherwise the body-size cap can be bypassed by streaming a chunked body.
         r = await client.post(
             "/mcp",
             headers={
@@ -59,3 +59,42 @@ class TestBodyLimit:
             content=b"hello",
         )
         assert r.status_code in (411, 413)
+
+    async def test_missing_content_length_on_post_rejected(self):
+        from server.limits import BodySizeLimitMiddleware
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        async def ok(_request):
+            return JSONResponse({"ok": True})
+
+        app = Starlette(routes=[Route("/x", ok, methods=["POST"])])
+        mw = BodySizeLimitMiddleware(app, max_bytes=1024)
+
+        # Craft an ASGI request with neither Content-Length nor Transfer-Encoding
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/x",
+            "raw_path": b"/x",
+            "headers": [],
+            "query_string": b"",
+            "scheme": "http",
+            "http_version": "1.1",
+            "client": ("test", 0),
+            "server": ("test", 80),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        captured = []
+
+        async def send(msg):
+            captured.append(msg)
+
+        await mw(scope, receive, send)
+        # First message is http.response.start
+        start = captured[0]
+        assert start["status"] == 411
