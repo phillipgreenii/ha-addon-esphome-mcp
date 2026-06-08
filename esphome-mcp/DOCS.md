@@ -139,8 +139,8 @@ network you do not fully control.
 - Per-file size cap (default 1 MiB) on push.
 - `esphome_compile` and `esphome_flash` are **disabled by default**.
 - Concurrent compile/flash invocations bounded by `max_concurrent_compiles`.
-- Container runs as unprivileged `esphomemcp` (UID 10001) under `tini` for
-  signal handling, with an AppArmor profile.
+- Container runs as unprivileged `esphomemcp` (UID 10001) under the HA
+  base image's s6-overlay supervisor (PID 1), with an AppArmor profile.
 - Supervisor watchdog (`/health`) restarts the add-on if it hangs.
 - Token logged once on first generation; stored at `/data/auth_token` mode
   0600.

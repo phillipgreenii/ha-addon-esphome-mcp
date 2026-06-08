@@ -46,7 +46,7 @@ Operators should update and rotate their auth tokens.
 - **Medium:** Concurrent compile/flash invocations bounded by a
   loop-scoped semaphore.
 - **Medium:** Container drops to unprivileged `esphomemcp` (UID 10001) via
-  `s6-setuidgid`; PID 1 is `tini`.
+  `s6-setuidgid`. PID 1 is the HA base image's s6-overlay supervisor.
 - **Medium:** AppArmor profile shipped (profile name matches slug).
 - **Medium:** Runtime dependencies pinned with hash verification (per-arch
   lockfiles).
@@ -61,7 +61,9 @@ Operators should update and rotate their auth tokens.
 ### Added
 - `compile_enabled`, `flash_enabled`, `max_concurrent_compiles`,
   `max_body_mb`, `max_file_mb` add-on options.
-- `/health` endpoint and Supervisor `watchdog`.
+- `/health` endpoint exposed for Supervisor's Watchdog toggle and as a
+  Docker `HEALTHCHECK` defense-in-depth (the HEALTHCHECK probes
+  `http://127.0.0.1:8099/health` from inside the container).
 - HA ingress as the default transport (`ingress: true`); direct port 8099
   removed from default config.
 - pytest suite with regression tests for every fix.
@@ -72,10 +74,20 @@ Operators should update and rotate their auth tokens.
 - `auth_token` option type changed from `str` to `password` (HA UI masks it).
 - `map: config:rw` → `map: share:rw` (ESPHome data lives in
   `/share/esphome` now).
-- `init: false` removed (defaults to true, s6-overlay handles PID 1
-  alongside `tini`).
+- `init: false` removed (defaults to true; the HA base image's s6-overlay
+  is PID 1 and handles signal forwarding + zombie reaping).
 - `panel_icon` removed (was dead config; ingress now provides the side
   panel entry).
+- Subprocess invocations (`esphome compile`/`run`/`config`/`logs`) now
+  spawn with `start_new_session=True` and are signaled via
+  `os.killpg()` on timeout or client disconnect, so grandchildren
+  (`platformio`, `gcc`, …) are reaped properly.
+- `_scan_unsafe_includes` now parses pushed YAML with a
+  `yaml.SafeLoader` subclass + `add_multi_constructor` rather than a
+  regex, closing two verified-live exfiltration bypasses (quoted
+  escape-newline scalars and the `!include` mapping form). Also rejects
+  YAML documents containing `%TAG` / `%YAML` directives and the
+  sequence form `!include\n  - <path>`.
 
 ### Removed
 - Dead `host="0.0.0.0"` kwarg on `FastMCP(...)`.

@@ -1,3 +1,16 @@
+# Supervisor defaults assumed for security-relevant keys (omitted because
+# the addon-linter rejects keys set to their schema default):
+#
+#   host_network: false        — no host-network namespace
+#   homeassistant_api: false   — no HA Core REST proxy
+#   hassio_api: false          — no Supervisor API access
+#   privileged: []             — no Linux capabilities
+#   full_access: false         — no /dev passthrough
+#   devices: []                — no device passthrough
+#   ingress_port: 8099         — what Supervisor's ingress proxies to
+#   startup: application       — start after HA Core
+#   boot: auto                 — start with HA on boot
+#
 name: ESPHome MCP Server
 version: 1.1.0
 slug: esphome-mcp

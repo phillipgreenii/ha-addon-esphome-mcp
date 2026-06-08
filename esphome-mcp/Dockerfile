@@ -40,7 +40,7 @@ WORKDIR /opt
 # Supervisor watchdog: HEALTHCHECK lets Home Assistant restart us if /health
 # stops responding. Replaces the deprecated YAML `watchdog:` key (which the
 # addon-linter now rejects).
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
   CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3).status == 200 else 1)" || exit 1
 
 CMD ["/opt/run.sh"]

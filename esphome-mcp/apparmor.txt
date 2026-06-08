@@ -17,11 +17,16 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/s6-setuidgid ix,
   /usr/local/bin/esphome ix,
   /usr/local/bin/platformio ix,
-  /command/s6-setuidgid ix,
+  /command/** ix,
+  /package/admin/s6-overlay/command/** ix,
+  /package/admin/s6/command/** ix,
   /usr/bin/with-contenv ix,
   /usr/bin/bashio ix,
   /usr/lib/bashio/** r,
   /init ix,
+  /etc/s6-overlay/** rix,
+  /run/s6/** rwk,
+  /run/service/** rwk,
 
   # Python site-packages — required for ESPHome imports
   /usr/lib/python3.*/** r,

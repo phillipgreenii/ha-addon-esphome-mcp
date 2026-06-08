@@ -582,6 +582,9 @@ def pull_files(filenames: list[str] | None = None) -> dict[str, str]:
     return result
 
 
+_FONT_COUNT_CAP = 200  # defense against unbounded /share/esphome/fonts growth
+
+
 def push_fonts(files: dict[str, str]) -> str:
     from .config import settings
     from .paths import ContainmentError, safe_filename
@@ -589,8 +592,20 @@ def push_fonts(files: dict[str, str]) -> str:
     fonts_dir = os.path.join(ESPHOME_DIR, "fonts")
     os.makedirs(fonts_dir, exist_ok=True)
 
+    existing_count = len([
+        p for p in os.listdir(fonts_dir)
+        if os.path.isfile(os.path.join(fonts_dir, p))
+    ])
+
     results = []
     for filename, b64_content in files.items():
+        if existing_count >= _FONT_COUNT_CAP:
+            results.append(
+                f"{filename}: REJECTED (font directory at cap of "
+                f"{_FONT_COUNT_CAP} files; delete some via the host shell "
+                f"before pushing more)"
+            )
+            continue
         try:
             name = safe_filename(os.path.basename(filename))
         except ContainmentError as e:
@@ -624,10 +639,13 @@ def push_fonts(files: dict[str, str]) -> str:
             continue
 
         target = os.path.join(fonts_dir, name)
+        is_new = not os.path.exists(target)
         try:
             with open(target, "wb") as f:
                 f.write(data)
             results.append(f"{filename}: OK ({len(data)} bytes)")
+            if is_new:
+                existing_count += 1
         except OSError:
             results.append(f"{filename}: ERROR (write failed)")
 
