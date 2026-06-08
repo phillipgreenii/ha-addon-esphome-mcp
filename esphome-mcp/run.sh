@@ -61,5 +61,5 @@ bashio::log.info "compile_enabled=${COMPILE_ENABLED} flash_enabled=${FLASH_ENABL
 bashio::log.info "max_concurrent_compiles=${MAX_CONCURRENT_COMPILES} body_mb=${MAX_BODY_MB} file_mb=${MAX_FILE_MB}"
 bashio::log.info "Starting ESPHome MCP Server on ${MCP_BIND}:8099 (ESPHOME_DIR=${ESPHOME_DIR})"
 
-# Drop privileges and let tini handle PID 1 (signal forwarding + reaping).
-exec s6-setuidgid esphomemcp tini -g -- python3 -m server.main
+# s6-overlay v3 is PID 1; tini is redundant inside an s6 service script.
+exec s6-setuidgid esphomemcp python3 -m server.main

@@ -2,7 +2,7 @@ ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
 # Runtime deps that stay in the image
-RUN apk add --no-cache git tini
+RUN apk add --no-cache git
 
 # Build deps used only for pip install — removed after.
 RUN apk add --no-cache --virtual .build-deps \

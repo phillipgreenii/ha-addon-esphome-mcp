@@ -14,7 +14,6 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /opt/run.sh ix,
   /opt/server/** r,
   /usr/bin/python3* ix,
-  /sbin/tini ix,
   /usr/bin/s6-setuidgid ix,
   /usr/local/bin/esphome ix,
   /usr/local/bin/platformio ix,
