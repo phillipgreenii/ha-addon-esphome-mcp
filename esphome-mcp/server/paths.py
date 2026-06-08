@@ -45,7 +45,19 @@ def safe_join(base: str, user_path: str) -> str:
     # leaf does not yet exist.
     walker = candidate
     while True:
-        if os.path.lexists(walker):
+        try:
+            os.lstat(walker)
+            exists = True
+        except FileNotFoundError:
+            exists = False
+        except OSError as e:
+            # Permission denied / other lstat failure: refuse rather than
+            # treat as nonexistent.
+            raise ContainmentError(
+                f"could not check ancestor {walker!r}: {e.strerror}"
+            ) from e
+
+        if exists:
             real = os.path.realpath(walker)
             if not _is_inside(base_real, real):
                 raise ContainmentError(

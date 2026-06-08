@@ -210,14 +210,22 @@ def list_devices() -> str:
     return "\n".join(lines)
 
 
-def validate(device: str) -> str:
+async def validate(device: str) -> str:
+    """Validate an ESPHome device config. Async; semaphore-gated."""
+    from .limits import get_compile_semaphore
+
     try:
         yaml_path = _device_yaml_path(device)
     except ValueError as e:
         return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
         return f"Device config not found: {os.path.basename(yaml_path)}"
-    return _run([ESPHOME_BIN, "config", yaml_path])
+
+    sem = get_compile_semaphore()
+    async with sem:
+        return await asyncio.to_thread(
+            _run, [ESPHOME_BIN, "config", yaml_path]
+        )
 
 
 async def compile_device(device: str) -> str:
@@ -262,17 +270,22 @@ async def flash(device: str) -> str:
         )
 
 
-def logs(device: str, num_lines: int = 50) -> str:
+async def logs(device: str, num_lines: int = 50) -> str:
+    """Get recent logs from an ESPHome device. Async; semaphore-gated."""
+    from .limits import get_compile_semaphore
+
     try:
         yaml_path = _device_yaml_path(device)
     except ValueError as e:
         return f"invalid device name (rejected by safety check): {e}"
     if not os.path.isfile(yaml_path):
         return f"Device config not found: {os.path.basename(yaml_path)}"
-    output = _run(
-        ["timeout", "15", ESPHOME_BIN, "logs", yaml_path],
-        timeout=30,
-    )
+
+    sem = get_compile_semaphore()
+    async with sem:
+        output = await asyncio.to_thread(
+            _run, ["timeout", "15", ESPHOME_BIN, "logs", yaml_path], 30
+        )
     lines = output.splitlines()
     if len(lines) > num_lines:
         lines = lines[-num_lines:]
