@@ -84,6 +84,15 @@ class TestLogsErrorPrefixPreservation:
         assert result.startswith("Command failed (exit 1):"), (
             f"error prefix lost; got: {result[:80]!r}"
         )
+        # Body content must NOT be truncated either — the whole point of
+        # the verbatim return path is to give the operator the full error
+        # context, not a tail of a possibly-truncated body.
+        assert "trace line 0" in result, (
+            "error path should return verbatim — first body line missing"
+        )
+        assert "trace line 99" in result, (
+            "error path should return verbatim — last body line missing"
+        )
 
     async def test_truncated_marker_preserved(
         self, esphome_dir, monkeypatch, clean_modules
@@ -109,12 +118,16 @@ class TestLogsErrorPrefixPreservation:
         assert result.startswith("[... output truncated"), (
             f"truncation marker dropped; got: {result[:80]!r}"
         )
-        # Should contain only ~5 body lines + the marker.
-        # (5 body lines + 1 marker line in this layout)
+        # Should contain only the LAST 5 body lines + the marker.
         body_lines = [
             ln for ln in result.splitlines()
             if not ln.startswith("[... output truncated")
         ]
         assert len(body_lines) == 5, (
             f"expected 5 body lines, got {len(body_lines)}: {body_lines!r}"
+        )
+        # CRITICAL: must be the LAST 5 — body was lines 0..199, we want 195..199
+        assert body_lines == [f"log line {i}" for i in range(195, 200)], (
+            f"expected the LAST 5 lines (195..199); got {body_lines!r}. "
+            f"A regression that keeps the FIRST N lines would land here."
         )

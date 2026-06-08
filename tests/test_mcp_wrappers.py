@@ -322,3 +322,60 @@ class TestIngressRealisticHost:
             assert r.status_code == 200, (
                 f"HA-external Host should pass; got {r.status_code}"
             )
+
+
+class TestEventLoopResponsiveDuringPush:
+    """The whole point of making push_files async + wrapping the YAML scan
+    in asyncio.to_thread was to keep the event loop responsive under load.
+    A regression that re-syncs the scan would pass every other test —
+    this test pins the behavior."""
+
+    async def test_health_responds_during_large_push(self, mcp_app, esphome_dir):
+        """While a 50k-key YAML scan is in flight, GET /health must
+        still respond in well under a second. If the scan is sync, the
+        event loop blocks for ~7s and /health times out."""
+        import asyncio
+        import time
+
+        big_yaml = "\n".join(f"k{i}: v{i}" for i in range(50000))
+
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            # Start the push concurrently
+            push_task = asyncio.create_task(
+                c.post(
+                    "/mcp",
+                    headers=_MCP_HEADERS,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 99,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "esphome_push_files",
+                            "arguments": {
+                                "files": {"big.yaml": big_yaml},
+                            },
+                        },
+                    },
+                )
+            )
+            # Brief yield so the push task starts and the scan begins
+            await asyncio.sleep(0.1)
+
+            # /health must respond fast
+            t0 = time.time()
+            r = await c.get("/health")
+            elapsed = time.time() - t0
+            assert r.status_code == 200, (
+                f"/health failed during push: {r.status_code}"
+            )
+            assert elapsed < 1.0, (
+                f"/health took {elapsed:.2f}s during push — event loop "
+                f"blocked. The scan is likely no longer in a worker thread."
+            )
+
+            # Drain the push for cleanliness
+            push_r = await push_task
+            assert push_r.status_code == 200

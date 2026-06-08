@@ -32,11 +32,15 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /usr/lib/bashio/** r,
   /init ix,
   /etc/s6-overlay/** rix,
-  # s6 runtime state — read-only is enough for our addon, which doesn't
-  # manage services itself. s6-overlay (PID 1) runs OUTSIDE this profile,
-  # so its write access to these dirs is not affected by this rule.
-  /run/s6/** r,
-  /run/service/** r,
+  # s6 runtime state — the AppArmor profile attaches to the WHOLE
+  # container (Docker `--security-opt apparmor=esphome-mcp`), including
+  # PID 1, which is s6-overlay's stage-1 `/init`. s6-svscan / s6-supervise
+  # write supervisor state files (control fifos, event pipes) under these
+  # paths, so they must be writable. The dangerous primitives (ptrace,
+  # mount, sys_admin) are explicitly denied below.
+  /run/s6/** rwk,
+  /run/s6-rc/** rwk,
+  /run/service/** rwk,
 
   # Python site-packages — required for ESPHome imports
   /usr/lib/python3.*/** r,
