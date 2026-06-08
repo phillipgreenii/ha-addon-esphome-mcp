@@ -92,9 +92,19 @@ Operators should update and rotate their auth tokens.
   sequence form `!include\n  - <path>`.
 
 ### Removed
-- Dead `host="0.0.0.0"` kwarg on `FastMCP(...)`.
 - Hardcoded `BUILD_ARCH: aarch64` in `build.yaml` (Supervisor injects
   per-arch automatically).
+
+Note: an interim revision attempted to remove `host="0.0.0.0"` from
+`FastMCP(...)` as "dead code". The kwarg was in fact suppressing the
+MCP SDK's auto-enable of DNS-rebinding protection. Under HA Supervisor
+ingress, the upstream Host header is the addon container name (not
+loopback), so the auto-enabled protection rejected every request with
+421 Misdirected Request. Equivalent behavior is now requested
+explicitly via
+`transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)`
+because the addon's auth boundary is the bearer token + HA ingress
+login, not Host-header allowlisting.
 
 ## [1.0.0] - 2026-03-17
 

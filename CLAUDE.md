@@ -16,8 +16,10 @@ to the ESPHome CLI and `/share/esphome/`.
 - `esphome-mcp/` — The add-on.
   - `config.yaml` — HA add-on manifest. Ingress is the default transport
     (`ingress: true`, `ingress_entry: /mcp`); `map: [{type: share,
-    read_only: false}]` (NOT `config:rw`); `watchdog: ...:/health`
-    exposes the Supervisor "Watchdog" toggle.
+    read_only: false}]` (NOT `config:rw`). The YAML `watchdog:` key was
+    rejected by the addon-linter as obsolete; liveness comes from the
+    Dockerfile `HEALTHCHECK` and Supervisor's "Watchdog" toggle (which
+    operators enable manually — see DOCS.md).
   - `build.yaml` — Multi-arch Docker build config. NO `args:` block.
   - `Dockerfile` — Alpine + Python + ESPHome. Container runs as
     root only long enough to chown; drops to UID 10001 via `s6-setuidgid`

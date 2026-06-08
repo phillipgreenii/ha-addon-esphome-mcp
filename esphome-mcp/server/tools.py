@@ -267,23 +267,29 @@ def _device_yaml_path(device: str) -> str:
 
 
 _RUN_OUTPUT_TAIL_BYTES = 64 * 1024  # 64 KiB — last N bytes kept on overflow
+_RUN_ERROR_PREFIXES = ("Command failed", "Command timed out", "Command not found")
+_RUN_TRUNCATED_MARKER_PREFIX = "[... output truncated"
 
 
-def _signal_process_group(proc, sig: int) -> None:
+def _signal_process_group(proc: "asyncio.subprocess.Process", sig: int) -> None:
     """Signal the entire process group. Falls back to the immediate child
-    if the PG lookup fails (e.g., child already exited)."""
+    if the process-group lookup fails (e.g., child already exited).
+
+    Sync because os.killpg / Process.send_signal don't block — safe to
+    call from async code.
+    """
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, sig)
-    except (ProcessLookupError, PermissionError, OSError):
-        # Child already exited or we don't own the PG — try the child
-        try:
+    except (ProcessLookupError, PermissionError):
+        # Child already exited or we don't own the PG — try the child.
+        # Suppress ProcessLookupError here too (child exited between PG
+        # lookup and direct signal).
+        with contextlib.suppress(ProcessLookupError, OSError):
             proc.send_signal(sig)
-        except ProcessLookupError:
-            pass
 
 
-async def _terminate_proc(proc) -> None:
+async def _terminate_proc(proc: "asyncio.subprocess.Process") -> None:
     """SIGTERM the process group; SIGKILL escalation after 3-second grace."""
     _signal_process_group(proc, signal.SIGTERM)
     try:
@@ -305,7 +311,7 @@ async def _run_async(
       - Bounded output: at most `_RUN_OUTPUT_TAIL_BYTES` of combined output
         is retained. Earlier bytes are tail-truncated with a marker.
     """
-    if not cmd:
+    if not cmd or not cmd[0]:
         return "Command not found: (empty command)"
 
     log.info("Running: %s", " ".join(cmd))
@@ -319,7 +325,12 @@ async def _run_async(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
-    except FileNotFoundError as e:
+    except (
+        FileNotFoundError,
+        PermissionError,
+        IsADirectoryError,
+        NotADirectoryError,
+    ) as e:
         return f"Command not found: {e}"
 
     stdout = bytearray()
@@ -330,9 +341,10 @@ async def _run_async(
     # final trim after the read loop ensures the returned buffer respects
     # the hard cap regardless of where the stream happened to end.
     _SOFT_CAP = 2 * _RUN_OUTPUT_TAIL_BYTES
-    truncated = [False]  # closure-mutable sentinel
+    truncated = False
 
     async def _drain():
+        nonlocal truncated
         assert proc.stdout is not None
         while True:
             chunk = await proc.stdout.read(8192)
@@ -341,11 +353,11 @@ async def _run_async(
             stdout.extend(chunk)
             if len(stdout) > _SOFT_CAP:
                 del stdout[: len(stdout) - _RUN_OUTPUT_TAIL_BYTES]
-                truncated[0] = True
+                truncated = True
         # Final trim — guarantees the buffer is at most the hard cap.
         if len(stdout) > _RUN_OUTPUT_TAIL_BYTES:
             del stdout[: len(stdout) - _RUN_OUTPUT_TAIL_BYTES]
-            truncated[0] = True
+            truncated = True
 
     drain_task = asyncio.create_task(_drain())
     wait_task = asyncio.create_task(proc.wait())
@@ -373,7 +385,7 @@ async def _run_async(
     output = stdout.decode("utf-8", errors="replace").strip()
     truncated_marker = (
         f"[... output truncated, last {_RUN_OUTPUT_TAIL_BYTES} bytes shown ...]\n"
-        if truncated[0]
+        if truncated
         else ""
     )
 
@@ -531,16 +543,23 @@ async def logs(device: str, num_lines: int = 50) -> str:
         output = await _run_async(
             [ESPHOME_BIN, "logs", yaml_path], timeout=15
         )
-    # Preserve the error/timeout prefix (and the [... truncated ...] marker)
-    # by only line-trimming the body. If the helper signalled failure, return
-    # the full helper output verbatim.
-    error_prefixes = ("Command failed", "Command timed out", "Command not found")
-    if output.startswith(error_prefixes):
+    # Preserve the error/timeout prefix verbatim — the caller needs to see
+    # the structured failure header, not a tail of the (possibly truncated)
+    # body. Same for the "[... output truncated ...]" header: if we trim
+    # lines to num_lines we'd silently drop it.
+    if output.startswith(_RUN_ERROR_PREFIXES):
         return output
+
+    truncated_marker = ""
+    if output.startswith(_RUN_TRUNCATED_MARKER_PREFIX):
+        marker, _, body = output.partition("\n")
+        truncated_marker = marker + "\n"
+        output = body
+
     lines = output.splitlines()
     if len(lines) > num_lines:
         lines = lines[-num_lines:]
-    return "\n".join(lines)
+    return truncated_marker + "\n".join(lines)
 
 
 async def push_files(files: dict[str, str]) -> str:

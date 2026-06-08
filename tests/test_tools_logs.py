@@ -59,3 +59,62 @@ class TestLogs:
         lines = result.splitlines()
         assert len(lines) == 5
         assert lines[-1] == "line 99"
+
+
+class TestLogsErrorPrefixPreservation:
+    async def test_command_failed_prefix_preserved(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """When _run_async returns an error-prefixed string (e.g. "Command
+        failed (exit 1): ..."), logs() must NOT strip lines off the top
+        via `[-num_lines:]` — the prefix line is the most important line."""
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        (esphome_dir / "lamp.yaml").write_text("esphome:\n  name: lamp\n")
+
+        # Fake _run_async returning a structured error message.
+        async def fake_run(*args, **kwargs):
+            body = "\n".join(f"trace line {i}" for i in range(100))
+            return f"Command failed (exit 1):\n{body}"
+
+        monkeypatch.setattr(tools, "_run_async", fake_run)
+        result = await tools.logs("lamp", num_lines=5)
+        # Error prefix must be at the START of the output.
+        assert result.startswith("Command failed (exit 1):"), (
+            f"error prefix lost; got: {result[:80]!r}"
+        )
+
+    async def test_truncated_marker_preserved(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """When _run_async marks the output as truncated (the leading
+        '[... output truncated ...]' line), logs() must keep that marker
+        even after the per-line trim."""
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        (esphome_dir / "lamp.yaml").write_text("esphome:\n  name: lamp\n")
+
+        async def fake_run(*args, **kwargs):
+            body = "\n".join(f"log line {i}" for i in range(200))
+            return (
+                f"[... output truncated, last {tools._RUN_OUTPUT_TAIL_BYTES} "
+                f"bytes shown ...]\n{body}"
+            )
+
+        monkeypatch.setattr(tools, "_run_async", fake_run)
+        result = await tools.logs("lamp", num_lines=5)
+        # Marker must lead, then the last 5 lines of the body follow.
+        assert result.startswith("[... output truncated"), (
+            f"truncation marker dropped; got: {result[:80]!r}"
+        )
+        # Should contain only ~5 body lines + the marker.
+        # (5 body lines + 1 marker line in this layout)
+        body_lines = [
+            ln for ln in result.splitlines()
+            if not ln.startswith("[... output truncated")
+        ]
+        assert len(body_lines) == 5, (
+            f"expected 5 body lines, got {len(body_lines)}: {body_lines!r}"
+        )

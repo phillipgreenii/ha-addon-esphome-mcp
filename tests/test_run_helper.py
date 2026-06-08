@@ -75,14 +75,21 @@ class TestRunAsyncErrors:
 
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
         result = await tools._run_async(["echo"])
-        # Cap is 64 KiB; the truncated marker adds ~60 bytes. The hard
-        # ceiling is ~66 KiB; pick 70 KiB to absorb small marker drift.
-        assert len(result) <= 70 * 1024, (
-            f"output cap exceeded: result is {len(result)} bytes"
+        # Upper bound: cap (64 KiB) + marker (~60 B) + small slop.
+        # Lower bound: must stay CLOSE to the cap — if a regression halved
+        # the cap to 32 KiB, the upper-bound check alone would miss it.
+        cap = tools._RUN_OUTPUT_TAIL_BYTES
+        assert len(result) <= cap + 200, (
+            f"output cap exceeded: result is {len(result)} bytes, "
+            f"cap is {cap}"
+        )
+        assert len(result) >= cap - 200, (
+            f"output suspiciously below cap: {len(result)} bytes, "
+            f"cap is {cap}. A regression that halved the cap would land here."
         )
         # The marker should appear at the START of the output (before the
         # tail) so the user sees it before scrolling.
-        assert result.startswith("[... output truncated"), (
+        assert result.startswith(tools._RUN_TRUNCATED_MARKER_PREFIX), (
             f"truncation marker should be the leading line; got: {result[:80]!r}"
         )
 
@@ -172,4 +179,75 @@ class TestRunAsyncTimeoutPath:
         assert "timed out" in result.lower()
         assert int(signal.SIGTERM) in signal_calls, (
             f"expected SIGTERM on timeout; got {signal_calls}"
+        )
+
+
+class TestRunAsyncKillEscalation:
+    async def test_sigkill_when_sigterm_does_not_take(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """The previous timeout test had a bug: HangingProc.wait() returned
+        0 on the second call, so the SIGTERM-grace asyncio.wait_for never
+        timed out and the SIGKILL escalation path was unreachable. This
+        test fixes that by making wait() hang on both the first call
+        (triggering the outer timeout) AND the second call (triggering
+        the inner SIGTERM-grace timeout and the SIGKILL escalation).
+        """
+        import asyncio
+        import signal
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        signal_calls: list[int] = []
+
+        class Stream:
+            async def read(self, n=-1):
+                await asyncio.sleep(30)
+                return b""
+
+        class StubbornProc:
+            pid = 88888
+            returncode = None
+            stdout = Stream()
+
+            def __init__(self):
+                self._waits = 0
+
+            async def wait(self):
+                self._waits += 1
+                # Calls 1 & 2: hang. The 3s SIGTERM-grace will time out.
+                # Call 3 (after SIGKILL): return immediately so the test
+                # doesn't hang past its own timeout.
+                if self._waits < 3:
+                    await asyncio.sleep(30)
+                self.returncode = -9
+                return -9
+
+            def send_signal(self, sig):
+                pass
+
+        async def fake_create(*cmd, **kwargs):
+            return StubbornProc()
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        monkeypatch.setattr("os.getpgid", lambda pid: pid)
+        monkeypatch.setattr(
+            "os.killpg",
+            lambda pgid, sig: signal_calls.append(int(sig)),
+        )
+
+        # Outer timeout=1 fires after 1s. SIGTERM-grace is 3s. So expect
+        # ~4s elapsed before SIGKILL escalation produces the return.
+        result = await tools._run_async(["sleep", "999"], timeout=1)
+        assert "timed out" in result.lower()
+        assert int(signal.SIGTERM) in signal_calls, (
+            f"SIGTERM should be first; got {signal_calls}"
+        )
+        assert int(signal.SIGKILL) in signal_calls, (
+            f"SIGKILL escalation must run after the 3s SIGTERM-grace; "
+            f"got {signal_calls}"
+        )
+        # Ordering: SIGTERM must precede SIGKILL.
+        assert signal_calls.index(int(signal.SIGTERM)) < signal_calls.index(
+            int(signal.SIGKILL)
         )

@@ -276,3 +276,49 @@ class TestMcpToolWiring:
             )
             assert r.status_code in (200, 202)
             assert "f.ttf" in r.text
+
+
+class TestIngressRealisticHost:
+    """Regression: round-2 silently broke ingress requests because the MCP
+    SDK auto-enables DNS-rebinding protection when host is loopback. Under
+    HA Supervisor ingress, the upstream Host header is the addon container
+    name, NOT loopback. Make sure non-loopback Host headers succeed."""
+
+    async def test_addon_container_host_succeeds(self, mcp_app):
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://addon_local_esphome_mcp:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 100,
+                    "method": "tools/list",
+                    "params": {},
+                },
+            )
+            assert r.status_code == 200, (
+                f"non-loopback Host should pass; got {r.status_code}. "
+                f"Round-2 broke this by removing FastMCP host kwarg."
+            )
+
+    async def test_external_ha_host_succeeds(self, mcp_app):
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://homeassistant.local:8123",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 101,
+                    "method": "tools/list",
+                    "params": {},
+                },
+            )
+            assert r.status_code == 200, (
+                f"HA-external Host should pass; got {r.status_code}"
+            )
