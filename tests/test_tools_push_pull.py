@@ -100,3 +100,20 @@ class TestPullFiles:
         result = tools.pull_files([evil])
         for v in result.values():
             assert "SENSITIVE" not in v
+
+
+class TestPullFilesArchiveFallback:
+    async def test_pull_explicit_falls_back_to_archive(self, esphome_dir):
+        """When the requested filename doesn't exist in the active dir
+        but DOES exist in archive/, pull_files should return it. The
+        archive-fallback line was uncovered prior to this test."""
+        from server import tools
+        # Plant ONLY in archive — not in active dir.
+        (esphome_dir / "archive" / "retired.yaml").write_text(
+            "esphome:\n  name: retired\n"
+        )
+        result = tools.pull_files(["retired.yaml"])
+        assert "archive/retired.yaml" in result, (
+            f"archive fallback didn't trigger; got keys: {list(result.keys())}"
+        )
+        assert "esphome:" in result["archive/retired.yaml"]

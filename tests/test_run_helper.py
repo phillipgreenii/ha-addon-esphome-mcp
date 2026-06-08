@@ -251,3 +251,97 @@ class TestRunAsyncKillEscalation:
         assert signal_calls.index(int(signal.SIGTERM)) < signal_calls.index(
             int(signal.SIGKILL)
         )
+
+
+class TestSignalProcessGroupFallback:
+    async def test_killpg_failure_falls_back_to_send_signal(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """When os.killpg raises (PermissionError / ProcessLookupError),
+        _signal_process_group must fall back to proc.send_signal so the
+        immediate child still gets the signal. Round-2 review flagged
+        this branch as untested."""
+        import asyncio
+        import signal
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        signal_calls = []
+
+        class Stream:
+            async def read(self, n=-1):
+                await asyncio.sleep(30)
+                return b""
+
+        class FallbackProc:
+            pid = 33333
+            returncode = None
+            stdout = Stream()
+            def __init__(self):
+                self._waits = 0
+            async def wait(self):
+                self._waits += 1
+                if self._waits == 1:
+                    await asyncio.sleep(30)  # force the outer timeout
+                return 0
+            def send_signal(self, sig):
+                # The fallback target — what we want to verify is called.
+                signal_calls.append(("send_signal", int(sig)))
+
+        async def fake_create(*cmd, **kwargs):
+            return FallbackProc()
+
+        def fake_getpgid(pid):
+            return pid
+
+        def fake_killpg(pgid, sig):
+            # Simulate "we don't own the PG" → PermissionError. This is
+            # the branch _signal_process_group is supposed to catch.
+            raise PermissionError("simulated: we don't own this PG")
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        monkeypatch.setattr("os.getpgid", fake_getpgid)
+        monkeypatch.setattr("os.killpg", fake_killpg)
+
+        result = await tools._run_async(["sleep", "30"], timeout=1)
+        assert "timed out" in result.lower()
+        # send_signal must have been called as the fallback path.
+        assert ("send_signal", int(signal.SIGTERM)) in signal_calls, (
+            f"send_signal fallback was not invoked after killpg raised; "
+            f"got {signal_calls}"
+        )
+
+
+class TestRunAsyncErrorSubclasses:
+    async def test_permission_error_message(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """Round-9 split the spawn-failure message:
+        FileNotFoundError → 'Command not found'
+        Other OSError subclasses → 'Command failed to start'
+        Verify the PermissionError branch."""
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        async def fake_create(*cmd, **kwargs):
+            raise PermissionError(13, "Permission denied", cmd[0])
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        result = await tools._run_async(["/some/binary"])
+        assert "Command failed to start" in result, (
+            f"PermissionError should yield 'Command failed to start' "
+            f"(distinguishes from FileNotFoundError); got: {result!r}"
+        )
+
+    async def test_is_a_directory_error_message(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        async def fake_create(*cmd, **kwargs):
+            raise IsADirectoryError(21, "Is a directory", cmd[0])
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        result = await tools._run_async(["/etc"])
+        assert "Command failed to start" in result
