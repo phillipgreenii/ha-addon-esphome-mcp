@@ -30,10 +30,13 @@ ingress_entry: /mcp
 map:
   - type: share
     read_only: false
-# Exposes Supervisor's "Watchdog" toggle in the addon UI. With the toggle
-# enabled, a /health probe failure (or the Docker HEALTHCHECK in the
-# Dockerfile reporting unhealthy) triggers an automatic restart.
-watchdog: "http://[HOST]:[PORT:8099]/health"
+# NOTE on Supervisor watchdog: the YAML `watchdog:` key is rejected by
+# the addon-linter ("obsolete. Use the native Docker HEALTHCHECK
+# directive instead"). Liveness comes from the Dockerfile HEALTHCHECK.
+# Without the YAML key, Supervisor still surfaces an "Unhealthy" badge
+# on container HEALTHCHECK failure, but operators must enable the addon's
+# "Watchdog" toggle in the HA UI for automatic restart on unhealthy.
+# See DOCS.md "Recommended deployment" for the one-click step.
 options:
   auth_token: ""
   compile_enabled: false

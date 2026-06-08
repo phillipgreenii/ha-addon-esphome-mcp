@@ -61,9 +61,11 @@ Operators should update and rotate their auth tokens.
 ### Added
 - `compile_enabled`, `flash_enabled`, `max_concurrent_compiles`,
   `max_body_mb`, `max_file_mb` add-on options.
-- `/health` endpoint exposed for Supervisor's Watchdog toggle and as a
-  Docker `HEALTHCHECK` defense-in-depth (the HEALTHCHECK probes
-  `http://127.0.0.1:8099/health` from inside the container).
+- `/health` endpoint + Dockerfile `HEALTHCHECK` (probes
+  `http://127.0.0.1:8099/health` from inside the container). NOTE: the
+  YAML `watchdog:` key is rejected by the addon-linter as obsolete, so
+  Supervisor's automatic restart-on-unhealthy requires the operator to
+  enable the addon's "Watchdog" toggle in the HA UI (see DOCS.md).
 - HA ingress as the default transport (`ingress: true`); direct port 8099
   removed from default config.
 - pytest suite with regression tests for every fix.
