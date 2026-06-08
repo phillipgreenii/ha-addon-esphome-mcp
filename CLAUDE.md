@@ -14,9 +14,10 @@ to the ESPHome CLI and `/share/esphome/`.
 
 - `repository.yaml` — HA add-on repository metadata.
 - `esphome-mcp/` — The add-on.
-  - `config.yaml` — HA add-on manifest. Ingress is the default transport;
-    `map: [{type: share, read_only: false}]` (NOT `config:rw`);
-    `watchdog: ...:/health`.
+  - `config.yaml` — HA add-on manifest. Ingress is the default transport
+    (`ingress: true`, `ingress_entry: /mcp`); `map: [{type: share,
+    read_only: false}]` (NOT `config:rw`); `watchdog: ...:/health`
+    exposes the Supervisor "Watchdog" toggle.
   - `build.yaml` — Multi-arch Docker build config. NO `args:` block.
   - `Dockerfile` — Alpine + Python + ESPHome. Container runs as
     root only long enough to chown; drops to UID 10001 via `s6-setuidgid`
@@ -48,7 +49,9 @@ to the ESPHome CLI and `/share/esphome/`.
 
 ## Key Conventions
 
-- **Transport**: HA ingress (`ingress: true`, `ingress_port: 8099`).
+- **Transport**: HA ingress (`ingress: true`). The internal port is the
+  Supervisor default (8099); `ingress_port:` is intentionally omitted
+  because the addon-linter rejects keys set to their schema default.
   Direct LAN port deliberately not exposed in the default `config.yaml`.
 - **Auth**: Bearer token in `Authorization` header. Auto-generated on
   first start, persisted plaintext at `/data/auth_token` mode 0600,

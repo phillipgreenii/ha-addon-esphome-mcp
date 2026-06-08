@@ -151,10 +151,11 @@ app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body_bytes)
 
 if __name__ == "__main__":
     port = int(os.environ.get("MCP_PORT", "8099"))
-    log.info("ESPHome MCP Server starting on port %d", port)
+    bind = os.environ.get("MCP_BIND", "0.0.0.0")
+    log.info("ESPHome MCP Server starting on %s:%d", bind, port)
     uvicorn.run(
         "server.main:app",
-        host="0.0.0.0",
+        host=bind,
         port=port,
         log_level="info",
     )
