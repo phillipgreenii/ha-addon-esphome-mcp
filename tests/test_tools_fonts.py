@@ -36,11 +36,22 @@ class TestPushFonts:
             ESPHOME_MCP_MAX_FILE_BYTES="1024",
         )
         from server import tools
-        body = base64.b64encode(b"x" * 5000).decode()
+        # Valid TTF magic prefix so we hit the size check, not the magic check.
+        body = base64.b64encode(VALID_HEADER + b"\x00" * 5000).decode()
         result = tools.push_fonts({"big.ttf": body})
         assert "REJECTED" in result
+        assert "max file size" in result
 
     def test_invalid_base64_rejected(self, esphome_dir):
         from server import tools
         result = tools.push_fonts({"x.ttf": "@@@not-base64@@@"})
         assert "REJECTED" in result
+
+    def test_garbage_payload_rejected(self, esphome_dir):
+        import base64
+        from server import tools
+        # 1000 bytes of garbage that doesn't match any font magic
+        body = base64.b64encode(b"\xff" * 1000).decode()
+        result = tools.push_fonts({"garbage.ttf": body})
+        assert "REJECTED" in result
+        assert "magic" in result.lower()

@@ -8,7 +8,6 @@ import base64
 import glob
 import logging
 import os
-import subprocess
 
 import yaml
 
@@ -20,6 +19,26 @@ ESPHOME_BIN = "esphome"
 FORBIDDEN_FILES = {"secrets.yaml", ".secret.yaml"}
 
 ALLOWED_FONT_EXTENSIONS = {".ttf", ".otf", ".bdf", ".pcf", ".woff", ".woff2"}
+
+# (ext, magic_prefixes) — accept the file if its first bytes match any prefix.
+FONT_MAGIC_PREFIXES: dict[str, tuple[bytes, ...]] = {
+    ".ttf": (b"\x00\x01\x00\x00", b"true", b"OTTO"),  # TrueType / OpenType
+    ".otf": (b"OTTO", b"\x00\x01\x00\x00"),
+    ".woff": (b"wOFF",),
+    ".woff2": (b"wOF2",),
+    ".bdf": (b"STARTFONT",),
+    ".pcf": (b"\x01fcp",),
+}
+
+
+def _font_magic_ok(name: str, data: bytes) -> bool:
+    """Return True if data's prefix matches a known magic for name's extension."""
+    name_lower = name.lower()
+    for ext, prefixes in FONT_MAGIC_PREFIXES.items():
+        if name_lower.endswith(ext):
+            return any(data.startswith(p) for p in prefixes)
+    return False
+
 
 _DISABLED_MSG = (
     "{action} is disabled. Enable it by setting the add-on option "
@@ -156,30 +175,6 @@ def _device_yaml_path(device: str) -> str:
     return primary
 
 
-def _run(cmd: list[str], timeout: int = 120, cwd: str | None = None) -> str:
-    """Run a command and return combined stdout+stderr."""
-    log.info("Running: %s", " ".join(cmd))
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd or ESPHOME_DIR,
-        )
-        output = result.stdout
-        if result.stderr:
-            output += "\n" + result.stderr
-        output = output.strip()
-        if result.returncode != 0:
-            return f"Command failed (exit {result.returncode}):\n{output}"
-        return output
-    except subprocess.TimeoutExpired:
-        return f"Command timed out after {timeout}s"
-    except FileNotFoundError as e:
-        return f"Command not found: {e}"
-
-
 _RUN_OUTPUT_TAIL_BYTES = 64 * 1024  # 64 KiB — last N bytes kept on overflow
 
 
@@ -188,7 +183,7 @@ async def _run_async(
 ) -> str:
     """Run a subprocess asynchronously and return combined stdout+stderr.
 
-    Differences from the legacy sync `_run`:
+    Properties:
       - Cancellable: if the calling coroutine is cancelled, the child is
         terminated (SIGTERM, then SIGKILL after a 3-second grace).
       - Bounded output: at most `_RUN_OUTPUT_TAIL_BYTES` of combined output
@@ -527,6 +522,12 @@ def push_fonts(files: dict[str, str]) -> str:
             data = base64.b64decode(b64_content, validate=True)
         except Exception:
             results.append(f"{filename}: REJECTED (invalid base64)")
+            continue
+        if not _font_magic_ok(name, data):
+            results.append(
+                f"{filename}: REJECTED (content does not match a known font "
+                f"magic for extension)"
+            )
             continue
         if len(data) > settings.max_file_bytes:
             results.append(
