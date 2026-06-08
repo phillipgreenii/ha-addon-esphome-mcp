@@ -9,7 +9,6 @@ loop. We cache it by id(loop) so that test isolation (which reloads the loop
 between tests) does not produce 'attached to a different loop' errors.
 """
 import asyncio
-from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -53,7 +52,7 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-_SEMAPHORES: "dict[int, asyncio.Semaphore]" = {}
+_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 
 
 def get_compile_semaphore() -> asyncio.Semaphore:
@@ -65,7 +64,7 @@ def get_compile_semaphore() -> asyncio.Semaphore:
     """
     from .config import settings
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     key = id(loop)
     sem = _SEMAPHORES.get(key)
     if sem is None:
