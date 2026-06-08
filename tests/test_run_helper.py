@@ -78,3 +78,91 @@ class TestRunAsyncErrors:
         # Output cap is 64 KiB; result must be smaller than 1 MB.
         assert len(result) < 200_000
         assert "truncated" in result
+
+
+class TestRunAsyncProcessGroup:
+    async def test_run_async_uses_new_session(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """Verify _run_async passes start_new_session=True so kills hit
+        the entire process group, not just the immediate child."""
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        captured_kwargs: dict = {}
+
+        class FakeStream:
+            async def read(self, n=-1):
+                return b""
+
+        class FakeProc:
+            pid = 12345
+            returncode = 0
+            stdout = FakeStream()
+            async def wait(self):
+                return 0
+            def send_signal(self, sig):
+                pass
+
+        async def fake_create(*cmd, **kwargs):
+            captured_kwargs.update(kwargs)
+            return FakeProc()
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        await tools._run_async(["echo", "hi"])
+        assert captured_kwargs.get("start_new_session") is True
+
+    async def test_run_async_empty_command(self, esphome_dir, clean_modules):
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+        result = await tools._run_async([])
+        assert "not found" in result.lower()
+
+
+class TestRunAsyncTimeoutPath:
+    async def test_timeout_returns_timed_out_message(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """Verify _run_async's timeout path: child must be SIGTERM'd via
+        killpg, then SIGKILL'd if SIGTERM doesn't take within 3s."""
+        import asyncio
+        import signal
+        clean_modules(ESPHOME_DIR=str(esphome_dir))
+        from server import tools
+
+        signal_calls: list[int] = []
+
+        class HangingStream:
+            async def read(self, n=-1):
+                await asyncio.sleep(30)
+                return b""
+
+        class HangingProc:
+            pid = 77777
+            returncode = None
+            stdout = HangingStream()
+            def __init__(self):
+                self._waits = 0
+            async def wait(self):
+                self._waits += 1
+                # First wait: hang until timeout fires.
+                # Subsequent waits (post-signal): return immediately so the
+                # SIGTERM-grace timeout passes quickly through to SIGKILL.
+                if self._waits == 1:
+                    await asyncio.sleep(30)
+                return 0
+            def send_signal(self, sig):
+                signal_calls.append(int(sig))
+
+        async def fake_create(*cmd, **kwargs):
+            return HangingProc()
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+        monkeypatch.setattr("os.getpgid", lambda pid: pid)
+        monkeypatch.setattr("os.killpg", lambda pgid, sig: signal_calls.append(int(sig)))
+
+        result = await tools._run_async(["sleep", "30"], timeout=1)
+        assert "timed out" in result.lower()
+        assert int(signal.SIGTERM) in signal_calls, (
+            f"expected SIGTERM on timeout; got {signal_calls}"
+        )

@@ -5,9 +5,12 @@ All tools operate locally on the Home Assistant filesystem — no SSH needed.
 
 import asyncio
 import base64
+import contextlib
 import glob
 import logging
 import os
+import re
+import signal
 
 import yaml
 
@@ -55,8 +58,16 @@ _INCLUDE_TAGS = (
 )
 
 
-def _extract_include_path(node: "yaml.Node") -> str | None:
-    """Extract the file path from an !include* node, scalar or mapping form."""
+def _extract_include_path(node: "yaml.Node") -> str | list[str] | None:
+    """Extract the file path(s) from an !include* node.
+
+    Returns:
+      str        — scalar `!include path`
+      list[str]  — sequence `!include [path1, path2]`, OR a sentinel list
+                   with a "(...)" string when the node form is unrecognized
+                   so the conservative-reject path fires.
+      None       — only when there is genuinely no path-like value at all.
+    """
     if isinstance(node, yaml.ScalarNode):
         return node.value
     if isinstance(node, yaml.MappingNode):
@@ -68,6 +79,18 @@ def _extract_include_path(node: "yaml.Node") -> str | None:
                 and isinstance(v_node, yaml.ScalarNode)
             ):
                 return v_node.value
+        # Mapping without a `file:` key: conservatively reject so a future
+        # ESPHome syntax extension can't slip a path past the scanner.
+        return ["(unrecognized !include mapping form)"]
+    if isinstance(node, yaml.SequenceNode):
+        # Sequence form: pull every scalar entry.
+        paths: list[str] = []
+        for item in node.value:
+            if isinstance(item, yaml.ScalarNode):
+                paths.append(item.value)
+            else:
+                paths.append("(non-scalar sequence entry)")
+        return paths or ["(empty sequence !include)"]
     return None
 
 
@@ -82,6 +105,12 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
     resolved relative to its directory.
     """
     from .paths import ContainmentError, safe_join
+
+    # %TAG / %YAML directives can rewrite tag prefixes in ways that bypass
+    # `add_multi_constructor("!", ...)` — and ESPHome itself doesn't use
+    # them, so reject defensively.
+    if re.search(r"^\s*%(?:TAG|YAML)\b", content, re.MULTILINE):
+        return ["(unsupported YAML directive)"]
 
     yaml_dir = os.path.dirname(target_yaml_path)
     unsafe: list[str] = []
@@ -115,7 +144,18 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
     def _make_include_constructor():
         def constructor(loader, node):
             path = _extract_include_path(node)
-            if path is not None:
+            if path is None:
+                return None
+            if isinstance(path, list):
+                for p in path:
+                    if isinstance(p, str) and p.startswith("("):
+                        # Sentinel from _extract_include_path — append
+                        # directly so the push is rejected without trying
+                        # to interpret the sentinel as a real path.
+                        unsafe.append(p)
+                    else:
+                        _check(p)
+            else:
                 _check(path)
             return None  # don't try to actually load
         return constructor
@@ -131,9 +171,9 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
 
     try:
         yaml.load(content, Loader=ScanLoader)
-    except yaml.YAMLError:
-        # Malformed YAML — reject the push outright. ESPHome would fail to load
-        # anyway, but rejecting at push time gives the client a clean error.
+    except (yaml.YAMLError, RecursionError):
+        # Malformed YAML (or pathologically nested input that blew the
+        # recursion limit) — reject the push outright.
         unsafe.append("(malformed YAML)")
 
     return unsafe
@@ -178,17 +218,45 @@ def _device_yaml_path(device: str) -> str:
 _RUN_OUTPUT_TAIL_BYTES = 64 * 1024  # 64 KiB — last N bytes kept on overflow
 
 
+def _signal_process_group(proc, sig: int) -> None:
+    """Signal the entire process group. Falls back to the immediate child
+    if the PG lookup fails (e.g., child already exited)."""
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        # Child already exited or we don't own the PG — try the child
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            pass
+
+
+async def _terminate_proc(proc) -> None:
+    """SIGTERM the process group; SIGKILL escalation after 3-second grace."""
+    _signal_process_group(proc, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3)
+    except asyncio.TimeoutError:
+        _signal_process_group(proc, signal.SIGKILL)
+        await proc.wait()
+
+
 async def _run_async(
     cmd: list[str], timeout: int = 120, cwd: str | None = None
 ) -> str:
     """Run a subprocess asynchronously and return combined stdout+stderr.
 
     Properties:
-      - Cancellable: if the calling coroutine is cancelled, the child is
+      - Cancellable: if the calling coroutine is cancelled, the ENTIRE
+        process group (child + grandchildren like platformio/gcc) is
         terminated (SIGTERM, then SIGKILL after a 3-second grace).
       - Bounded output: at most `_RUN_OUTPUT_TAIL_BYTES` of combined output
         is retained. Earlier bytes are tail-truncated with a marker.
     """
+    if not cmd:
+        return "Command not found: (empty command)"
+
     log.info("Running: %s", " ".join(cmd))
     work_dir = cwd if cwd is not None else ESPHOME_DIR
 
@@ -198,6 +266,7 @@ async def _run_async(
             cwd=work_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
         )
     except FileNotFoundError as e:
         return f"Command not found: {e}"
@@ -218,27 +287,27 @@ async def _run_async(
             else:
                 stdout.extend(chunk)
 
+    drain_task = asyncio.create_task(_drain())
+    wait_task = asyncio.create_task(proc.wait())
+
+    async def _cancel_drain():
+        drain_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await drain_task
+
     try:
         await asyncio.wait_for(
-            asyncio.gather(_drain(), proc.wait()),
+            asyncio.gather(drain_task, wait_task),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=3)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+        await _terminate_proc(proc)
+        await _cancel_drain()
         return f"Command timed out after {timeout}s"
     except asyncio.CancelledError:
         # Client disconnected; kill the child so it stops consuming resources.
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=3)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+        await _terminate_proc(proc)
+        await _cancel_drain()
         raise
 
     output = stdout.decode("utf-8", errors="replace").strip()
