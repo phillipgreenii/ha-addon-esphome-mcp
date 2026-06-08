@@ -3,12 +3,8 @@
 profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
-  # Capabilities — chown for the run.sh drop-privs path; setuid/setgid for
-  # s6-setuidgid.
-  capability dac_override,
-  capability dac_read_search,
+  # Minimal capabilities for the s6-setuidgid drop-privs chain.
   capability chown,
-  capability fowner,
   capability setuid,
   capability setgid,
   capability kill,
@@ -35,6 +31,11 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   # Data + state
   /tmp/** rwk,
   /data/** rwk,
+  # The auth token file is owner-only (mode 0600 from run.sh). Deny
+  # explicitly so that ESPHome subprocesses (compile/validate/etc.) cannot
+  # exfiltrate it via crafted YAML, regardless of how containment is
+  # bypassed at the Python layer.
+  deny /data/auth_token rwx,
   /share/esphome/** rwk,
 
   # Network: outbound for ESPHome OTA + listening socket
