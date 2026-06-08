@@ -58,18 +58,50 @@ _INCLUDE_TAGS = (
 )
 
 
-def _extract_include_path(node: "yaml.Node") -> str | list[str] | None:
+# Tag URIs the ScalarNode for an !include path is allowed to carry. Anything
+# else (e.g. `!secret`, `!lambda`, `!extend`) makes the value opaque from our
+# scanner's perspective — ESPHome resolves the tag at validate/compile time
+# to something we can't predict at push time, so we must reject.
+_PLAIN_STR_TAGS = frozenset({
+    "tag:yaml.org,2002:str",
+    "tag:yaml.org,2002:null",  # treated as no-value
+})
+
+
+class _IncludeExtractResult:
+    """Discriminated result from `_extract_include_path`.
+
+    Uses object identity for the reject markers so user-supplied paths
+    can NEVER be misclassified as a sentinel.
+    """
+
+    __slots__ = ("paths", "reject_reason")
+
+    def __init__(
+        self, paths: list[str] | None = None, reject_reason: str | None = None
+    ) -> None:
+        self.paths = paths or []
+        self.reject_reason = reject_reason
+
+
+def _extract_include_path(node: "yaml.Node") -> _IncludeExtractResult:
     """Extract the file path(s) from an !include* node.
 
-    Returns:
-      str        — scalar `!include path`
-      list[str]  — sequence `!include [path1, path2]`, OR a sentinel list
-                   with a "(...)" string when the node form is unrecognized
-                   so the conservative-reject path fires.
-      None       — only when there is genuinely no path-like value at all.
+    The outer node's tag is ALWAYS one of the `!include*` tags we
+    registered for — PyYAML routed the construction to us because of that
+    tag, so we don't inspect node.tag here. We DO inspect tags on inner
+    nodes (the `file:` value in mapping form, the items of a sequence)
+    because there an attacker can write e.g. `file: !secret leak_path`
+    and have ESPHome resolve the path at validate-time to something we
+    can't predict at push-time.
+
+    Returns _IncludeExtractResult: a `.paths` list of user-supplied path
+    strings to validate via _check, or a `.reject_reason` string the
+    caller treats as unconditional-reject (which the user CAN'T forge —
+    we never put user content in `.reject_reason`).
     """
     if isinstance(node, yaml.ScalarNode):
-        return node.value
+        return _IncludeExtractResult(paths=[node.value])
     if isinstance(node, yaml.MappingNode):
         # ESPHome accepts: !include\n  file: <path>\n  vars: ...
         for k_node, v_node in node.value:
@@ -78,20 +110,36 @@ def _extract_include_path(node: "yaml.Node") -> str | list[str] | None:
                 and k_node.value == "file"
                 and isinstance(v_node, yaml.ScalarNode)
             ):
-                return v_node.value
+                if v_node.tag not in _PLAIN_STR_TAGS:
+                    return _IncludeExtractResult(
+                        reject_reason=(
+                            f"non-plain tag on !include file value: "
+                            f"{v_node.tag}"
+                        )
+                    )
+                return _IncludeExtractResult(paths=[v_node.value])
         # Mapping without a `file:` key: conservatively reject so a future
         # ESPHome syntax extension can't slip a path past the scanner.
-        return ["(unrecognized !include mapping form)"]
+        return _IncludeExtractResult(
+            reject_reason="unrecognized !include mapping form"
+        )
     if isinstance(node, yaml.SequenceNode):
-        # Sequence form: pull every scalar entry.
+        if not node.value:
+            return _IncludeExtractResult(
+                reject_reason="empty sequence !include"
+            )
         paths: list[str] = []
         for item in node.value:
-            if isinstance(item, yaml.ScalarNode):
+            if isinstance(item, yaml.ScalarNode) and item.tag in _PLAIN_STR_TAGS:
                 paths.append(item.value)
             else:
-                paths.append("(non-scalar sequence entry)")
-        return paths or ["(empty sequence !include)"]
-    return None
+                return _IncludeExtractResult(
+                    reject_reason="non-plain or non-scalar sequence entry"
+                )
+        return _IncludeExtractResult(paths=paths)
+    return _IncludeExtractResult(
+        reject_reason=f"unsupported !include node type: {type(node).__name__}"
+    )
 
 
 def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
@@ -108,9 +156,17 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
 
     # %TAG / %YAML directives can rewrite tag prefixes in ways that bypass
     # `add_multi_constructor("!", ...)` — and ESPHome itself doesn't use
-    # them, so reject defensively.
-    if re.search(r"^\s*%(?:TAG|YAML)\b", content, re.MULTILINE):
-        return ["(unsupported YAML directive)"]
+    # them, so reject defensively. Use the real YAML scanner (which knows
+    # what a directive is) instead of a regex that false-positives on
+    # text like "%TAG" appearing inside a block scalar.
+    try:
+        for token in yaml.scan(content):
+            if isinstance(token, yaml.DirectiveToken):
+                return [f"REJECTED: unsupported YAML directive %{token.name}"]
+    except yaml.YAMLError:
+        # If the scanner can't tokenize, the full parse below will fail
+        # too — let it produce the malformed-YAML rejection.
+        pass
 
     yaml_dir = os.path.dirname(target_yaml_path)
     unsafe: list[str] = []
@@ -143,20 +199,15 @@ def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
 
     def _make_include_constructor():
         def constructor(loader, node):
-            path = _extract_include_path(node)
-            if path is None:
+            result = _extract_include_path(node)
+            if result.reject_reason is not None:
+                # Object-identity-based rejection: the user can't forge
+                # this because reject_reason is set only in our extraction
+                # function, never from user content.
+                unsafe.append(f"REJECTED: {result.reject_reason}")
                 return None
-            if isinstance(path, list):
-                for p in path:
-                    if isinstance(p, str) and p.startswith("("):
-                        # Sentinel from _extract_include_path — append
-                        # directly so the push is rejected without trying
-                        # to interpret the sentinel as a real path.
-                        unsafe.append(p)
-                    else:
-                        _check(p)
-            else:
-                _check(path)
+            for p in result.paths:
+                _check(p)
             return None  # don't try to actually load
         return constructor
 
@@ -492,8 +543,13 @@ async def logs(device: str, num_lines: int = 50) -> str:
     return "\n".join(lines)
 
 
-def push_files(files: dict[str, str]) -> str:
-    """Write YAML files to the ESPHome config directory."""
+async def push_files(files: dict[str, str]) -> str:
+    """Write YAML files to the ESPHome config directory.
+
+    Async because the per-file YAML scan can take seconds on a large pushed
+    file (PyYAML's pure-Python parser). Run the scan in a worker thread so
+    the asyncio event loop (and `/health`) stays responsive under load.
+    """
     from .config import settings
     from .paths import ContainmentError, safe_join
 
@@ -521,7 +577,10 @@ def push_files(files: dict[str, str]) -> str:
         # Reject YAML that contains !include directives pointing outside
         # ESPHOME_DIR. ESPHome's YAML loader follows these at validate/compile
         # time, so an unchecked include is an arbitrary-file read primitive.
-        unsafe = _scan_unsafe_includes(content, target)
+        # Offload the parse to a worker thread — see the function docstring.
+        unsafe = await asyncio.to_thread(
+            _scan_unsafe_includes, content, target
+        )
         if unsafe:
             results.append(
                 f"{filename}: REJECTED (unsafe !include path(s): {unsafe})"
