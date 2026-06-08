@@ -71,7 +71,7 @@ class TestConcurrencyCap:
         in_flight = 0
         peak = 0
 
-        async def fake_to_thread(func, *args, **kwargs):
+        async def fake_run_async(cmd, timeout=120, cwd=None):
             nonlocal in_flight, peak
             in_flight += 1
             peak = max(peak, in_flight)
@@ -79,7 +79,7 @@ class TestConcurrencyCap:
             in_flight -= 1
             return "ok"
 
-        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(tools, "_run_async", fake_run_async)
 
         await asyncio.gather(
             tools.compile_device("lamp"),
@@ -104,7 +104,7 @@ class TestConcurrencyCap:
         in_flight = 0
         peak = 0
 
-        async def fake_to_thread(func, *args, **kwargs):
+        async def fake_run_async(cmd, timeout=120, cwd=None):
             nonlocal in_flight, peak
             in_flight += 1
             peak = max(peak, in_flight)
@@ -112,7 +112,7 @@ class TestConcurrencyCap:
             in_flight -= 1
             return "ok"
 
-        monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(tools, "_run_async", fake_run_async)
 
         await asyncio.gather(
             tools.compile_device("lamp"),
@@ -122,3 +122,63 @@ class TestConcurrencyCap:
         )
 
         assert peak == 2, f"expected peak concurrency 2, got {peak}"
+
+
+class TestSubprocessCancellation:
+    async def test_compile_terminates_child_on_cancel(
+        self, esphome_dir, monkeypatch, clean_modules
+    ):
+        """Verify that cancelling the compile coroutine actually kills the
+        child process — not just drops the future."""
+        import asyncio
+        clean_modules(
+            ESPHOME_DIR=str(esphome_dir),
+            ESPHOME_MCP_COMPILE_ENABLED="true",
+        )
+        from server import tools
+        from server.limits import _reset_semaphores_for_tests
+        _reset_semaphores_for_tests()
+
+        (esphome_dir / "lamp.yaml").write_text("esphome:\n  name: lamp\n")
+
+        terminate_calls = []
+
+        class SlowStream:
+            async def read(self, n=-1):
+                await asyncio.sleep(10)  # never completes within test
+                return b""
+
+        class SlowProc:
+            def __init__(self):
+                self.returncode = None
+                self.stdout = SlowStream()
+                self._waited = False
+
+            async def wait(self):
+                if not self._waited:
+                    self._waited = True
+                    await asyncio.sleep(10)
+                self.returncode = 0
+                return 0
+
+            def terminate(self):
+                terminate_calls.append("terminate")
+                self.returncode = -15
+
+            def kill(self):
+                terminate_calls.append("kill")
+                self.returncode = -9
+
+        async def fake_create(*cmd, **kwargs):
+            return SlowProc()
+
+        monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
+
+        task = asyncio.create_task(tools.compile_device("lamp"))
+        await asyncio.sleep(0.05)  # let the task start
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert "terminate" in terminate_calls, (
+            f"expected terminate() to be called on cancel; got {terminate_calls}"
+        )

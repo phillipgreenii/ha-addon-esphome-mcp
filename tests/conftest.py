@@ -50,17 +50,54 @@ def esphome_dir(tmp_path, monkeypatch, clean_modules):
 
 @pytest.fixture
 def fake_subprocess(monkeypatch):
-    """Replace subprocess.run with a recorder that returns success."""
+    """Patch subprocess.run AND asyncio.create_subprocess_exec to record calls."""
     calls = []
 
-    class Result:
+    class SyncResult:
         returncode = 0
         stdout = "ok"
         stderr = ""
 
     def fake_run(cmd, **kwargs):
-        calls.append({"cmd": cmd, "kwargs": kwargs})
-        return Result()
+        calls.append({"cmd": list(cmd), "kwargs": kwargs})
+        return SyncResult()
 
     monkeypatch.setattr("subprocess.run", fake_run)
+
+    class FakeStream:
+        def __init__(self, data: bytes = b"ok\n"):
+            self._data = data
+            self._pos = 0
+
+        async def read(self, n=-1):
+            if self._pos >= len(self._data):
+                return b""
+            if n < 0:
+                chunk = self._data[self._pos:]
+                self._pos = len(self._data)
+            else:
+                chunk = self._data[self._pos : self._pos + n]
+                self._pos += len(chunk)
+            return chunk
+
+    class FakeProc:
+        def __init__(self, cmd):
+            self.returncode = 0
+            self.stdout = FakeStream()
+            self._cmd = cmd
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    async def fake_create(*cmd, **kwargs):
+        calls.append({"cmd": list(cmd), "kwargs": kwargs})
+        return FakeProc(cmd)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
     return calls

@@ -180,6 +180,84 @@ def _run(cmd: list[str], timeout: int = 120, cwd: str | None = None) -> str:
         return f"Command not found: {e}"
 
 
+_RUN_OUTPUT_TAIL_BYTES = 64 * 1024  # 64 KiB — last N bytes kept on overflow
+
+
+async def _run_async(
+    cmd: list[str], timeout: int = 120, cwd: str | None = None
+) -> str:
+    """Run a subprocess asynchronously and return combined stdout+stderr.
+
+    Differences from the legacy sync `_run`:
+      - Cancellable: if the calling coroutine is cancelled, the child is
+        terminated (SIGTERM, then SIGKILL after a 3-second grace).
+      - Bounded output: at most `_RUN_OUTPUT_TAIL_BYTES` of combined output
+        is retained. Earlier bytes are tail-truncated with a marker.
+    """
+    log.info("Running: %s", " ".join(cmd))
+    work_dir = cwd if cwd is not None else ESPHOME_DIR
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=work_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError as e:
+        return f"Command not found: {e}"
+
+    stdout = bytearray()
+
+    async def _drain():
+        assert proc.stdout is not None
+        while True:
+            chunk = await proc.stdout.read(8192)
+            if not chunk:
+                break
+            if len(stdout) + len(chunk) > _RUN_OUTPUT_TAIL_BYTES:
+                # Keep only the tail.
+                combined = bytes(stdout) + chunk
+                stdout.clear()
+                stdout.extend(combined[-_RUN_OUTPUT_TAIL_BYTES:])
+            else:
+                stdout.extend(chunk)
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(_drain(), proc.wait()),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        return f"Command timed out after {timeout}s"
+    except asyncio.CancelledError:
+        # Client disconnected; kill the child so it stops consuming resources.
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        raise
+
+    output = stdout.decode("utf-8", errors="replace").strip()
+    truncated_marker = (
+        f"[... output truncated, last {_RUN_OUTPUT_TAIL_BYTES} bytes shown ...]\n"
+        if len(stdout) >= _RUN_OUTPUT_TAIL_BYTES
+        else ""
+    )
+
+    if proc.returncode != 0:
+        return f"Command failed (exit {proc.returncode}):\n{truncated_marker}{output}"
+    return f"{truncated_marker}{output}" if truncated_marker else output
+
+
 def _parse_device_info(yaml_path: str) -> dict:
     """Parse basic device info from a YAML file. Errors are summarized;
     full exception detail is never returned to the client."""
@@ -265,9 +343,7 @@ async def validate(device: str) -> str:
 
     sem = get_compile_semaphore()
     async with sem:
-        return await asyncio.to_thread(
-            _run, [ESPHOME_BIN, "config", yaml_path]
-        )
+        return await _run_async([ESPHOME_BIN, "config", yaml_path])
 
 
 async def compile_device(device: str) -> str:
@@ -286,8 +362,8 @@ async def compile_device(device: str) -> str:
 
     sem = get_compile_semaphore()
     async with sem:
-        return await asyncio.to_thread(
-            _run, [ESPHOME_BIN, "compile", yaml_path], timeout=300
+        return await _run_async(
+            [ESPHOME_BIN, "compile", yaml_path], timeout=300
         )
 
 
@@ -307,8 +383,8 @@ async def flash(device: str) -> str:
 
     sem = get_compile_semaphore()
     async with sem:
-        return await asyncio.to_thread(
-            _run, [ESPHOME_BIN, "run", yaml_path, "--no-logs"], timeout=600
+        return await _run_async(
+            [ESPHOME_BIN, "run", yaml_path, "--no-logs"], timeout=600
         )
 
 
@@ -325,8 +401,8 @@ async def logs(device: str, num_lines: int = 50) -> str:
 
     sem = get_compile_semaphore()
     async with sem:
-        output = await asyncio.to_thread(
-            _run, ["timeout", "15", ESPHOME_BIN, "logs", yaml_path], 30
+        output = await _run_async(
+            ["timeout", "15", ESPHOME_BIN, "logs", yaml_path], timeout=30
         )
     lines = output.splitlines()
     if len(lines) > num_lines:
