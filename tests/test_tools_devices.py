@@ -21,7 +21,7 @@ class TestDeviceResolution:
         with pytest.raises(ValueError):
             tools._device_yaml_path(evil)
 
-    def test_validate_handles_invalid_name_cleanly(self, esphome_dir):
+    async def test_validate_handles_invalid_name_cleanly(self, esphome_dir):
         from server import tools
-        out = tools.validate("../etc/passwd")
+        out = await tools.validate("../etc/passwd")
         assert "invalid device" in out.lower()

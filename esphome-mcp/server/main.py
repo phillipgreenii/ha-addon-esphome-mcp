@@ -39,13 +39,13 @@ def esphome_list_devices() -> str:
 
 
 @mcp.tool()
-def esphome_validate(device: str) -> str:
+async def esphome_validate(device: str) -> str:
     """Validate an ESPHome device config.
 
     Args:
         device: Device name (e.g. 'statusdisplay') or YAML filename.
     """
-    return tools.validate(device)
+    return await tools.validate(device)
 
 
 @mcp.tool()
@@ -74,7 +74,7 @@ async def esphome_flash(device: str) -> str:
 
 
 @mcp.tool()
-def esphome_logs(device: str, num_lines: int = 50) -> str:
+async def esphome_logs(device: str, num_lines: int = 50) -> str:
     """Get recent logs from an ESPHome device.
 
     Captures a snapshot of logs (streaming is not supported in MCP tools).
@@ -83,7 +83,7 @@ def esphome_logs(device: str, num_lines: int = 50) -> str:
         device: Device name (e.g. 'statusdisplay') or YAML filename.
         num_lines: Number of log lines to return (default 50).
     """
-    return tools.logs(device, num_lines)
+    return await tools.logs(device, num_lines)
 
 
 @mcp.tool()
