@@ -1,0 +1,17 @@
+# hadolint configuration for the ESPHome MCP add-on Dockerfile.
+#
+# Trusted base-image registries — Home Assistant's official Supervisor
+# add-on base images live on ghcr.io and docker.io.
+trustedRegistries:
+  - ghcr.io
+  - docker.io
+
+ignored:
+  # DL3018 — "Pin versions in apk add".
+  # Alpine does NOT promise per-package version stability across point
+  # releases of a given track (e.g., 3.21.x), so pinning here gives the
+  # illusion of reproducibility while breaking unattended rebuilds the
+  # moment the index moves. We instead rely on the HA base image
+  # (`*-base-python:3.12-alpine3.21`) for the frozen system layer, and on
+  # `--require-hashes` for the Python layer.
+  - DL3018
