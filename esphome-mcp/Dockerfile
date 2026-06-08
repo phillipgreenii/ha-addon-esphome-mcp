@@ -1,11 +1,11 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Runtime deps that stay in the image
-RUN apk add --no-cache git
-
-# Build deps used only for pip install — removed after.
-RUN apk add --no-cache --virtual .build-deps \
+# Runtime deps that stay in the image, plus build deps used only for pip
+# install (the `.build-deps` virtual package is removed below after pip).
+# Version pinning intentionally skipped — see .hadolint.yaml (DL3018).
+RUN apk add --no-cache git \
+ && apk add --no-cache --virtual .build-deps \
     gcc \
     g++ \
     musl-dev \
@@ -36,5 +36,11 @@ RUN chmod a+x /opt/run.sh \
  && chown -R esphomemcp:esphomemcp /opt
 
 WORKDIR /opt
+
+# Supervisor watchdog: HEALTHCHECK lets Home Assistant restart us if /health
+# stops responding. Replaces the deprecated YAML `watchdog:` key (which the
+# addon-linter now rejects).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python3 -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3).status == 200 else 1)" || exit 1
 
 CMD ["/opt/run.sh"]
