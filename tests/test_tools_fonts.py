@@ -55,3 +55,47 @@ class TestPushFonts:
         result = tools.push_fonts({"garbage.ttf": body})
         assert "REJECTED" in result
         assert "magic" in result.lower()
+
+
+class TestFontCountCap:
+    def test_cap_blocks_new_pushes(self, esphome_dir, monkeypatch):
+        """Once /share/esphome/fonts/ has _FONT_COUNT_CAP files, new pushes
+        are rejected. Uses a small cap via monkeypatch for fast testing."""
+        import base64
+        from server import tools
+        monkeypatch.setattr(tools, "_FONT_COUNT_CAP", 2)
+
+        fonts_dir = esphome_dir / "fonts"
+        # Plant 2 files to hit the cap.
+        (fonts_dir / "a.ttf").write_bytes(b"\x00\x01\x00\x00" + b"\x00" * 10)
+        (fonts_dir / "b.ttf").write_bytes(b"\x00\x01\x00\x00" + b"\x00" * 10)
+
+        body = base64.b64encode(b"\x00\x01\x00\x00" + b"\x00" * 10).decode()
+        result = tools.push_fonts({"new.ttf": body})
+        assert "REJECTED" in result
+        assert "cap of 2" in result
+        assert not (fonts_dir / "new.ttf").exists()
+
+    def test_in_batch_cap_enforced(self, esphome_dir, monkeypatch):
+        """In a single push batch, the cap must apply across the whole
+        batch — not just the initial directory count. Plant 1 existing,
+        push 3, expect the 3rd to be rejected (cap=3, 1+2=3, 3rd blocked)."""
+        import base64
+        from server import tools
+        monkeypatch.setattr(tools, "_FONT_COUNT_CAP", 3)
+
+        fonts_dir = esphome_dir / "fonts"
+        (fonts_dir / "preexisting.ttf").write_bytes(
+            b"\x00\x01\x00\x00" + b"\x00" * 10
+        )
+
+        body = base64.b64encode(b"\x00\x01\x00\x00" + b"\x00" * 10).decode()
+        result = tools.push_fonts({
+            "n1.ttf": body,
+            "n2.ttf": body,
+            "n3.ttf": body,
+        })
+        # Two of the three should succeed; the third hits the cap.
+        assert result.count("OK") == 2
+        assert result.count("REJECTED") == 1
+        assert "cap of 3" in result

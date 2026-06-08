@@ -17,6 +17,13 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/s6-setuidgid ix,
   /usr/local/bin/esphome ix,
   /usr/local/bin/platformio ix,
+  # s6-overlay v3 wires its service-supervision chain via many helper
+  # binaries (execlineb, s6-svscan, s6-svc, redirfd, fdmove, foreground,
+  # importas, with-contenv, etc.) that live under /command/ and the
+  # /package/admin/s6-overlay/... symlink farm. The init chain genuinely
+  # needs `ix` on the whole tree at boot; tightening to a single binary
+  # name silently breaks the supervisor. The dangerous primitives
+  # (ptrace, mount, sys_admin) are explicitly denied below.
   /command/** ix,
   /package/admin/s6-overlay/command/** ix,
   /package/admin/s6/command/** ix,
@@ -25,8 +32,11 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /usr/lib/bashio/** r,
   /init ix,
   /etc/s6-overlay/** rix,
-  /run/s6/** rwk,
-  /run/service/** rwk,
+  # s6 runtime state — read-only is enough for our addon, which doesn't
+  # manage services itself. s6-overlay (PID 1) runs OUTSIDE this profile,
+  # so its write access to these dirs is not affected by this rule.
+  /run/s6/** r,
+  /run/service/** r,
 
   # Python site-packages — required for ESPHome imports
   /usr/lib/python3.*/** r,
