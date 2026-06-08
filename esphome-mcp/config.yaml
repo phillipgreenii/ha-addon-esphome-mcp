@@ -21,7 +21,8 @@ homeassistant_api: false
 hassio_api: false
 # Narrower than `config:rw` — we only need our own slice of /share.
 map:
-  - share:rw
+  - type: share
+    read_only: false
 # Supervisor watchdog: restart if /health stops responding.
 watchdog: "http://[HOST]:[PORT:8099]/health"
 options:

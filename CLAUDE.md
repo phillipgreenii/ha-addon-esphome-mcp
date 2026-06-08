@@ -15,14 +15,15 @@ to the ESPHome CLI and `/share/esphome/`.
 - `repository.yaml` — HA add-on repository metadata.
 - `esphome-mcp/` — The add-on.
   - `config.yaml` — HA add-on manifest. Ingress is the default transport;
-    `map: share:rw` (NOT `config:rw`); `watchdog: ...:/health`.
+    `map: [{type: share, read_only: false}]` (NOT `config:rw`);
+    `watchdog: ...:/health`.
   - `build.yaml` — Multi-arch Docker build config. NO `args:` block.
-  - `Dockerfile` — Alpine + Python + ESPHome + `tini`. Container runs as
+  - `Dockerfile` — Alpine + Python + ESPHome. Container runs as
     root only long enough to chown; drops to UID 10001 via `s6-setuidgid`
     in `run.sh`.
   - `run.sh` — Add-on entry point. Reads options via bashio (`config.true`,
     `config.has_value`). Final exec is
-    `s6-setuidgid esphomemcp tini -g -- python3 -m server.main`.
+    `s6-setuidgid esphomemcp python3 -m server.main`.
   - `requirements.txt.in` — Declared top-level Python deps.
   - `requirements.{amd64,aarch64}.lock` — Hash-pinned per-arch lockfiles.
     Regenerate with `uv pip compile ... --generate-hashes`.
@@ -63,7 +64,7 @@ to the ESPHome CLI and `/share/esphome/`.
   push/pull. Best-effort UX filter, not a security boundary.
 - **ESPHome**: installed at build time via pip with hash-pinned wheels
   (`--require-hashes`). Per-arch lockfile.
-- **Container**: runs as UID 10001 (`esphomemcp`) under `tini`. AppArmor
+- **Container**: runs as UID 10001 (`esphomemcp`) under s6-overlay. AppArmor
   profile name = slug `esphome-mcp`.
 
 ## Building / Testing
