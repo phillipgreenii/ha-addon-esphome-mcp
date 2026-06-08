@@ -63,3 +63,94 @@ class TestIncludeRejection:
         content = 'esphome:\n  name: x\nleak: !include "/data/auth_token"\n'
         result = tools.push_files({"evil.yaml": content})
         assert "REJECTED" in result
+
+
+class TestIncludeScanBypasses:
+    """Regression tests for verified-live exploits in the previous regex scanner."""
+
+    def test_quoted_path_with_escape_rejected(self, esphome_dir):
+        """Round-3 review verified: this payload bypassed the regex scanner."""
+        from server import tools
+        payload = 'leak: !include "\\\n/data/auth_token"\n'
+        result = tools.push_files({"pwn1.yaml": payload})
+        assert "REJECTED" in result
+        assert not (esphome_dir / "pwn1.yaml").exists()
+
+    def test_mapping_form_with_absolute_file_rejected(self, esphome_dir):
+        """Round-3 review verified: !include mapping form was entirely unscanned."""
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: /data/auth_token\n"
+            "  vars: {}\n"
+        )
+        result = tools.push_files({"pwn2.yaml": payload})
+        assert "REJECTED" in result
+        assert not (esphome_dir / "pwn2.yaml").exists()
+
+    def test_mapping_form_with_traversal_file_rejected(self, esphome_dir):
+        from server import tools
+        payload = (
+            "leak: !include\n"
+            "  file: ../../etc/passwd\n"
+        )
+        result = tools.push_files({"pwn3.yaml": payload})
+        assert "REJECTED" in result
+
+    def test_unknown_custom_tag_does_not_abort_scan(self, esphome_dir):
+        """ESPHome YAML uses tags like !secret, !lambda — the scanner must
+        not bail out on them. A safe document containing such tags should
+        still be writable."""
+        from server import tools
+        payload = (
+            "esphome:\n"
+            "  name: x\n"
+            "wifi:\n"
+            "  ssid: !secret wifi_ssid\n"
+            "  password: !secret wifi_password\n"
+            "lights:\n"
+            "  - platform: binary\n"
+            "    output: my_light\n"
+            "    on_turn_on:\n"
+            "      - lambda: !lambda 'id(my_light).turn_on();'\n"
+        )
+        result = tools.push_files({"safe.yaml": payload})
+        assert "OK" in result
+        assert (esphome_dir / "safe.yaml").exists()
+
+    def test_malformed_yaml_rejected(self, esphome_dir):
+        from server import tools
+        # Unbalanced braces
+        result = tools.push_files({"bad.yaml": "esphome: {name: x\n"})
+        assert "REJECTED" in result
+
+    def test_comment_with_include_no_longer_false_positive(self, esphome_dir):
+        """The old regex flagged this as unsafe; the new YAML-aware scanner
+        sees it's a comment and lets it through."""
+        from server import tools
+        payload = (
+            "# This config does not !include /etc/passwd\n"
+            "esphome:\n  name: x\n"
+        )
+        result = tools.push_files({"comment.yaml": payload})
+        assert "OK" in result
+
+    def test_literal_block_with_include_text_no_longer_false_positive(self, esphome_dir):
+        """!include inside a literal block scalar is text, not a directive."""
+        from server import tools
+        payload = (
+            "esphome:\n  name: x\n"
+            "description: |\n"
+            "  Documentation: use !include /shared/common.yaml for shared configs.\n"
+        )
+        result = tools.push_files({"lit.yaml": payload})
+        assert "OK" in result
+
+    def test_relative_include_inside_base_still_allowed(self, esphome_dir):
+        from server import tools
+        payload = (
+            "esphome:\n  name: x\n"
+            "shared: !include sub/common.yaml\n"
+        )
+        result = tools.push_files({"good.yaml": payload})
+        assert "OK" in result

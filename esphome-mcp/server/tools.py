@@ -8,7 +8,6 @@ import base64
 import glob
 import logging
 import os
-import re
 import subprocess
 
 import yaml
@@ -28,55 +27,96 @@ _DISABLED_MSG = (
     "take effect after the add-on is restarted."
 )
 
-# Catches !include, !include_dir_list, !include_dir_named, !include_dir_merge_list,
-# !include_dir_merge_named — any ESPHome include directive that takes a path.
-_INCLUDE_DIRECTIVE_RE = re.compile(
-    r"!include(?:_dir_(?:list|named|merge_list|merge_named))?\s+([^\s#]+)"
+_INCLUDE_TAGS = (
+    "!include",
+    "!include_dir_list",
+    "!include_dir_named",
+    "!include_dir_merge_list",
+    "!include_dir_merge_named",
 )
 
 
-def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
-    """Return a list of unsafe !include paths in the YAML content.
+def _extract_include_path(node: "yaml.Node") -> str | None:
+    """Extract the file path from an !include* node, scalar or mapping form."""
+    if isinstance(node, yaml.ScalarNode):
+        return node.value
+    if isinstance(node, yaml.MappingNode):
+        # ESPHome accepts: !include\n  file: <path>\n  vars: ...
+        for k_node, v_node in node.value:
+            if (
+                isinstance(k_node, yaml.ScalarNode)
+                and k_node.value == "file"
+                and isinstance(v_node, yaml.ScalarNode)
+            ):
+                return v_node.value
+    return None
 
-    `target_yaml_path` is where the YAML will be written. Includes are resolved
-    relative to that file's directory. We reject:
-      - absolute paths (including the C:\\ form on Windows)
-      - paths whose normalized form escapes ESPHOME_DIR
-      - paths that pass containment but would target ESPHOME_DIR's own
-        forbidden files (secrets.yaml etc.)
+
+def _scan_unsafe_includes(content: str, target_yaml_path: str) -> list[str]:
+    """Return a list of unsafe !include* paths in the YAML content.
+
+    Parses YAML with a SafeLoader that registers custom constructors for every
+    ESPHome !include* tag. Each constructor validates the path. Unknown tags
+    (!secret, !lambda, etc.) are ignored so the parse does not abort.
+
+    `target_yaml_path` is where the YAML will be written; includes are
+    resolved relative to its directory.
     """
     from .paths import ContainmentError, safe_join
 
     yaml_dir = os.path.dirname(target_yaml_path)
-    unsafe = []
-    for match in _INCLUDE_DIRECTIVE_RE.finditer(content):
-        raw = match.group(1).strip().strip("\"'")
-        if not raw:
-            continue
-        # Reject absolute paths outright.
-        if os.path.isabs(raw):
-            unsafe.append(raw)
-            continue
-        # Resolve the include path relative to the yaml file's directory,
-        # then re-express relative to ESPHOME_DIR for safe_join.
-        absolute_target = os.path.normpath(os.path.join(yaml_dir, raw))
+    unsafe: list[str] = []
+
+    class ScanLoader(yaml.SafeLoader):
+        pass
+
+    def _check(path: str) -> None:
+        if not isinstance(path, str) or not path:
+            return
+        if os.path.isabs(path):
+            unsafe.append(path)
+            return
+        absolute_target = os.path.normpath(os.path.join(yaml_dir, path))
         try:
             rel_to_base = os.path.relpath(absolute_target, ESPHOME_DIR)
         except ValueError:
-            # Different drive (Windows) — definitely outside.
-            unsafe.append(raw)
-            continue
+            unsafe.append(path)
+            return
         if rel_to_base.startswith(".."):
-            unsafe.append(raw)
-            continue
+            unsafe.append(path)
+            return
         try:
             safe_join(ESPHOME_DIR, rel_to_base)
         except ContainmentError:
-            unsafe.append(raw)
-            continue
-        # Containment passed; also block include of forbidden files by name.
+            unsafe.append(path)
+            return
         if _is_forbidden(os.path.basename(rel_to_base)):
-            unsafe.append(raw)
+            unsafe.append(path)
+
+    def _make_include_constructor():
+        def constructor(loader, node):
+            path = _extract_include_path(node)
+            if path is not None:
+                _check(path)
+            return None  # don't try to actually load
+        return constructor
+
+    for tag in _INCLUDE_TAGS:
+        ScanLoader.add_constructor(tag, _make_include_constructor())
+
+    # Ignore every other custom tag rather than aborting.
+    def _ignore_unknown(loader, tag_suffix, node):
+        return None
+
+    ScanLoader.add_multi_constructor("!", _ignore_unknown)
+
+    try:
+        yaml.load(content, Loader=ScanLoader)
+    except yaml.YAMLError:
+        # Malformed YAML — reject the push outright. ESPHome would fail to load
+        # anyway, but rejecting at push time gives the client a clean error.
+        unsafe.append("(malformed YAML)")
+
     return unsafe
 
 
