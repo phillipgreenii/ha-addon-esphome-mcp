@@ -50,3 +50,30 @@ class TestListDevices:
         # Clear out the default subdirs by NOT planting any .yaml files
         result = tools.list_devices()
         assert "No device configurations found" in result
+
+
+class TestListDevicesContent:
+    def test_lists_active_yaml(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "lamp.yaml").write_text(
+            'esphome:\n  name: lamp\n  friendly_name: "Living Room Lamp"\n'
+        )
+        result = tools.list_devices()
+        assert "lamp" in result
+        assert "Living Room Lamp" in result
+
+    def test_lists_archived_yaml(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "archive" / "old.yaml").write_text(
+            "esphome:\n  name: old\n"
+        )
+        result = tools.list_devices()
+        assert "old" in result
+        assert "[archived]" in result
+
+    def test_error_yaml_shown_with_marker(self, esphome_dir):
+        from server import tools
+        (esphome_dir / "broken.yaml").write_text("[unterminated\n")
+        result = tools.list_devices()
+        assert "ERROR" in result
+        assert "broken.yaml" in result
