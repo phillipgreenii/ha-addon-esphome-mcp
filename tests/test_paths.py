@@ -54,11 +54,17 @@ class TestSafeJoin:
     def test_symlink_parent_escape_rejected(self, tmp_path):
         """A symlinked PARENT directory pointing outside base must be caught
         even if the leaf file does not yet exist (matters for writes)."""
-        outside_dir = tmp_path.parent / "outside_dir"
+        # Use tmp_path itself as the base and put the symlink target alongside
+        # it under a sibling that we own. Previously this used
+        # `tmp_path.parent / "outside_dir"` which lived under pytest's shared
+        # tmp root and leaked across `--count=N` repetitions.
+        base = tmp_path / "base"
+        base.mkdir()
+        outside_dir = tmp_path / "outside_dir"
         outside_dir.mkdir()
-        (tmp_path / "subdir").symlink_to(outside_dir)
+        (base / "subdir").symlink_to(outside_dir)
         with pytest.raises(ContainmentError):
-            safe_join(str(tmp_path), "subdir/newfile.yaml")
+            safe_join(str(base), "subdir/newfile.yaml")
 
     def test_nonexistent_base_directory_accepted(self, tmp_path):
         """When base itself does not exist, safe_join should still validate

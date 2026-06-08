@@ -22,7 +22,19 @@ class TestHealth:
             assert r.json() == {"status": "ok"}
 
     async def test_health_post_requires_auth(self, app):
-        """Only GET is auth-whitelisted; POST /health must still be auth'd."""
+        """Only GET is auth-whitelisted. POST /health WITHOUT auth must be
+        rejected by auth (401), not silently 405'd before auth runs — that
+        would mean the route handler short-circuited auth. With a wrong
+        bearer token (which CANNOT pass auth), the response must be 403:
+        auth ran and rejected. Either 401 or 403 is acceptable; 405 means
+        auth was bypassed."""
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-            r = await c.post("/health", content=b"{}")
-            assert r.status_code in (401, 405)
+            r = await c.post(
+                "/health",
+                headers={"Authorization": "Bearer wrong-token"},
+                content=b"{}",
+            )
+            assert r.status_code == 403, (
+                f"expected auth to run for POST /health; got {r.status_code}. "
+                f"405 would mean the route rejected the method before auth."
+            )

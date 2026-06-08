@@ -111,3 +111,168 @@ class TestMcpToolWiring:
             )
             assert r.status_code in (200, 202)
             assert "compile is disabled" in r.text
+
+    async def test_call_validate_wrapper(self, mcp_app):
+        """validate wrapper: with no devices, expect 'invalid device name'
+        or 'not found' from the underlying tool."""
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_validate",
+                        "arguments": {"device": "nonexistent"},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "not found" in r.text.lower()
+
+    async def test_call_flash_disabled_wrapper(self, mcp_app):
+        """flash is opt-in; default settings disable it."""
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_flash",
+                        "arguments": {"device": "anything"},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "flash is disabled" in r.text.lower()
+
+    async def test_call_logs_wrapper(self, mcp_app):
+        """logs wrapper: with no devices, expect 'not found'."""
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 12,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_logs",
+                        "arguments": {"device": "nonexistent"},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "not found" in r.text.lower()
+
+    async def test_call_push_files_wrapper(self, mcp_app, esphome_dir):
+        """push_files wrapper: should write a yaml file and return 'OK'."""
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 13,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_push_files",
+                        "arguments": {
+                            "files": {"x.yaml": "esphome:\n  name: x\n"},
+                        },
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "OK" in r.text
+            assert (esphome_dir / "x.yaml").exists()
+
+    async def test_call_pull_files_wrapper(self, mcp_app, esphome_dir):
+        """pull_files wrapper: should return the contents of an existing yaml."""
+        (esphome_dir / "lamp.yaml").write_text("esphome:\n  name: lamp\n")
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 14,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_pull_files",
+                        "arguments": {"filenames": ["lamp.yaml"]},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "lamp.yaml" in r.text
+
+    async def test_call_push_fonts_wrapper(self, mcp_app, esphome_dir):
+        """push_fonts wrapper: should accept a valid TTF base64 payload."""
+        import base64
+        ttf_payload = base64.b64encode(
+            b"\x00\x01\x00\x00" + b"\x00" * 100
+        ).decode()
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 15,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_push_fonts",
+                        "arguments": {"files": {"font.ttf": ttf_payload}},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "OK" in r.text
+            assert (esphome_dir / "fonts" / "font.ttf").exists()
+
+    async def test_call_pull_fonts_wrapper(self, mcp_app, esphome_dir):
+        """pull_fonts wrapper: should return base64 content of an existing font."""
+        (esphome_dir / "fonts" / "f.ttf").write_bytes(b"\x00\x01\x00\x00" + b"\x00" * 100)
+        async with AsyncClient(
+            transport=ASGITransport(app=mcp_app),
+            base_url="http://localhost:8099",
+        ) as c:
+            r = await c.post(
+                "/mcp",
+                headers=_MCP_HEADERS,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 16,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "esphome_pull_fonts",
+                        "arguments": {"filenames": ["f.ttf"]},
+                    },
+                },
+            )
+            assert r.status_code in (200, 202)
+            assert "f.ttf" in r.text

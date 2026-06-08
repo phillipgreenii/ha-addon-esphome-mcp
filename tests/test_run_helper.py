@@ -75,9 +75,16 @@ class TestRunAsyncErrors:
 
         monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create)
         result = await tools._run_async(["echo"])
-        # Output cap is 64 KiB; result must be smaller than 1 MB.
-        assert len(result) < 200_000
-        assert "truncated" in result
+        # Cap is 64 KiB; the truncated marker adds ~60 bytes. The hard
+        # ceiling is ~66 KiB; pick 70 KiB to absorb small marker drift.
+        assert len(result) <= 70 * 1024, (
+            f"output cap exceeded: result is {len(result)} bytes"
+        )
+        # The marker should appear at the START of the output (before the
+        # tail) so the user sees it before scrolling.
+        assert result.startswith("[... output truncated"), (
+            f"truncation marker should be the leading line; got: {result[:80]!r}"
+        )
 
 
 class TestRunAsyncProcessGroup:
