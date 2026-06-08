@@ -46,7 +46,7 @@ auth_token: "my-secret-token"
      "mcpServers": {
        "esphome": {
          "type": "http",
-         "url": "https://<your-ha-host>/api/hassio_ingress/<ingress-token>/mcp/",
+         "url": "https://<your-ha-host>/api/hassio_ingress/<ingress-token>/mcp",
          "headers": {
            "Authorization": "Bearer ${ESPHOME_MCP_TOKEN}"
          }
