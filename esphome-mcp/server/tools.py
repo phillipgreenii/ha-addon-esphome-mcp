@@ -273,19 +273,28 @@ async def _run_async(
 
     stdout = bytearray()
 
+    # Amortized O(N) truncation: append every chunk; only collapse to the
+    # tail when the buffer exceeds 2x the cap. The buffer never grows past
+    # 2x the cap during streaming, and per-byte work is O(1) amortized. A
+    # final trim after the read loop ensures the returned buffer respects
+    # the hard cap regardless of where the stream happened to end.
+    _SOFT_CAP = 2 * _RUN_OUTPUT_TAIL_BYTES
+    truncated = [False]  # closure-mutable sentinel
+
     async def _drain():
         assert proc.stdout is not None
         while True:
             chunk = await proc.stdout.read(8192)
             if not chunk:
                 break
-            if len(stdout) + len(chunk) > _RUN_OUTPUT_TAIL_BYTES:
-                # Keep only the tail.
-                combined = bytes(stdout) + chunk
-                stdout.clear()
-                stdout.extend(combined[-_RUN_OUTPUT_TAIL_BYTES:])
-            else:
-                stdout.extend(chunk)
+            stdout.extend(chunk)
+            if len(stdout) > _SOFT_CAP:
+                del stdout[: len(stdout) - _RUN_OUTPUT_TAIL_BYTES]
+                truncated[0] = True
+        # Final trim — guarantees the buffer is at most the hard cap.
+        if len(stdout) > _RUN_OUTPUT_TAIL_BYTES:
+            del stdout[: len(stdout) - _RUN_OUTPUT_TAIL_BYTES]
+            truncated[0] = True
 
     drain_task = asyncio.create_task(_drain())
     wait_task = asyncio.create_task(proc.wait())
@@ -313,7 +322,7 @@ async def _run_async(
     output = stdout.decode("utf-8", errors="replace").strip()
     truncated_marker = (
         f"[... output truncated, last {_RUN_OUTPUT_TAIL_BYTES} bytes shown ...]\n"
-        if len(stdout) >= _RUN_OUTPUT_TAIL_BYTES
+        if truncated[0]
         else ""
     )
 
@@ -465,9 +474,18 @@ async def logs(device: str, num_lines: int = 50) -> str:
 
     sem = get_compile_semaphore()
     async with sem:
+        # _run_async's own timeout is the only timeout we need — the
+        # external `timeout` binary would fire first and produce a
+        # misleading "exit 124" message.
         output = await _run_async(
-            ["timeout", "15", ESPHOME_BIN, "logs", yaml_path], timeout=30
+            [ESPHOME_BIN, "logs", yaml_path], timeout=15
         )
+    # Preserve the error/timeout prefix (and the [... truncated ...] marker)
+    # by only line-trimming the body. If the helper signalled failure, return
+    # the full helper output verbatim.
+    error_prefixes = ("Command failed", "Command timed out", "Command not found")
+    if output.startswith(error_prefixes):
+        return output
     lines = output.splitlines()
     if len(lines) > num_lines:
         lines = lines[-num_lines:]

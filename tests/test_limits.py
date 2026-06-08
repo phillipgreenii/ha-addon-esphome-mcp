@@ -60,18 +60,44 @@ class TestBodyLimit:
         )
         assert r.status_code in (411, 413)
 
-    async def test_invalid_content_length_returns_400(self, client):
-        r = await client.post(
-            "/mcp",
-            headers={
-                "Authorization": "Bearer tok",
-                "Content-Length": "abc",
-            },
-            content=b"hi",
-        )
-        # httpx may rewrite the Content-Length, but if it preserves "abc",
-        # middleware returns 400; otherwise (rewritten) we just pass through.
-        assert r.status_code in (400, 200, 421, 405, 411)
+    async def test_invalid_content_length_returns_400(self):
+        """Use a direct ASGI call so httpx doesn't rewrite the
+        Content-Length header. The middleware must return 400 on a
+        non-integer Content-Length."""
+        from server.limits import BodySizeLimitMiddleware
+        from starlette.applications import Starlette
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        async def ok(_request):
+            return JSONResponse({"ok": True})
+
+        app = Starlette(routes=[Route("/x", ok, methods=["POST"])])
+        mw = BodySizeLimitMiddleware(app, max_bytes=1024)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/x",
+            "raw_path": b"/x",
+            "headers": [(b"content-length", b"not-a-number")],
+            "query_string": b"",
+            "scheme": "http",
+            "http_version": "1.1",
+            "client": ("test", 0),
+            "server": ("test", 80),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        captured = []
+
+        async def send(msg):
+            captured.append(msg)
+
+        await mw(scope, receive, send)
+        assert captured[0]["status"] == 400
 
     async def test_missing_content_length_on_post_rejected(self):
         from server.limits import BodySizeLimitMiddleware

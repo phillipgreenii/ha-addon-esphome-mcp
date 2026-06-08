@@ -123,6 +123,9 @@ class TestIncludeScanBypasses:
         # Unbalanced braces
         result = tools.push_files({"bad.yaml": "esphome: {name: x\n"})
         assert "REJECTED" in result
+        # The rejection MUST come from the malformed-YAML marker, not from
+        # something else. This pins the actual failure path.
+        assert "(malformed YAML)" in result
 
     def test_comment_with_include_no_longer_false_positive(self, esphome_dir):
         """The old regex flagged this as unsafe; the new YAML-aware scanner
