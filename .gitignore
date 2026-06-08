@@ -10,3 +10,6 @@ __pycache__/
 uv.lock
 .coverage
 htmlcov/
+
+# Internal AI/workflow planning artifacts — not for the public repo.
+docs/superpowers/
