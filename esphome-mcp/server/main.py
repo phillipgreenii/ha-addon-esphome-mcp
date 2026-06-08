@@ -6,6 +6,7 @@ import os
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from . import tools
 from .auth import BearerAuthMiddleware
@@ -22,6 +23,16 @@ log = logging.getLogger("esphome-mcp")
 mcp = FastMCP(
     name="esphome",
     stateless_http=True,
+    # The MCP SDK auto-enables DNS-rebinding protection when host is one of
+    # ("127.0.0.1", "localhost", "::1") — the SDK's loopback default. Under
+    # HA Supervisor ingress the upstream Host header is the addon container
+    # name (e.g. "addon_local_esphome_mcp:8099"), NOT loopback. That breaks
+    # every production request with 421 Misdirected Request. Explicitly
+    # disable the protection: our auth boundary is the bearer token + HA
+    # ingress login, not Host-header allowlisting.
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
 
 
@@ -87,7 +98,7 @@ async def esphome_logs(device: str, num_lines: int = 50) -> str:
 
 
 @mcp.tool()
-def esphome_push_files(files: dict[str, str]) -> str:
+async def esphome_push_files(files: dict[str, str]) -> str:
     """Push YAML config files to the ESPHome directory on Home Assistant.
 
     Writes files to /share/esphome/. Rejects secrets.yaml.
@@ -96,7 +107,7 @@ def esphome_push_files(files: dict[str, str]) -> str:
         files: Dict mapping filename to YAML content.
                Use 'archive/name.yaml' for archived configs.
     """
-    return tools.push_files(files)
+    return await tools.push_files(files)
 
 
 @mcp.tool()
