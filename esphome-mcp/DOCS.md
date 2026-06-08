@@ -168,6 +168,11 @@ network you do not fully control.
 - Use ingress; do not re-add direct port mapping.
 - Rotate the token after any Supervisor backup restore to a new host:
   delete `/data/auth_token` and restart the add-on.
+- **Enable Supervisor's Watchdog toggle.** In the addon's Info tab in the
+  HA UI, turn on "Watchdog". Combined with the Dockerfile `HEALTHCHECK`,
+  this restarts the add-on automatically if `/health` stops responding.
+  (The Watchdog toggle defaults OFF because the `watchdog:` YAML key was
+  deprecated by the addon-linter; the operator action is needed once.)
 
 ## Network
 
