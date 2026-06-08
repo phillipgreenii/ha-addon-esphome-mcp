@@ -12,13 +12,15 @@ arch:
 # Direct port 8099 access is OFF by default — set `ports:` back if you need
 # LAN access AND have a TLS-terminating proxy.
 ingress: true
-ingress_entry: /mcp/
+ingress_entry: /mcp
 # Narrower than `config:rw` — we only need our own slice of /share.
 map:
   - type: share
     read_only: false
-# NOTE: Supervisor watchdog comes from the Dockerfile's HEALTHCHECK directive
-# (the addon-linter explicitly forbids the YAML `watchdog:` key).
+# Exposes Supervisor's "Watchdog" toggle in the addon UI. With the toggle
+# enabled, a /health probe failure (or the Docker HEALTHCHECK in the
+# Dockerfile reporting unhealthy) triggers an automatic restart.
+watchdog: "http://[HOST]:[PORT:8099]/health"
 options:
   auth_token: ""
   compile_enabled: false
