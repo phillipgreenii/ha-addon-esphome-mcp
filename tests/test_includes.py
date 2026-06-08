@@ -154,3 +154,37 @@ class TestIncludeScanBypasses:
         )
         result = tools.push_files({"good.yaml": payload})
         assert "OK" in result
+
+
+class TestSequenceFormBypass:
+    def test_sequence_form_absolute_rejected(self, esphome_dir):
+        from server import tools
+        payload = "leak: !include\n  - /etc/passwd\n  - /etc/shadow\n"
+        result = tools.push_files({"pwn4.yaml": payload})
+        assert "REJECTED" in result
+
+    def test_mapping_without_file_key_rejected(self, esphome_dir):
+        from server import tools
+        # filename: instead of file: (future-ESPHome hypothetical form)
+        payload = "leak: !include\n  filename: /etc/passwd\n"
+        result = tools.push_files({"pwn5.yaml": payload})
+        assert "REJECTED" in result
+
+    def test_yaml_tag_directive_rejected(self, esphome_dir):
+        from server import tools
+        payload = "%TAG ! !mybang!\n---\nesphome:\n  name: x\n"
+        result = tools.push_files({"pwn6.yaml": payload})
+        assert "REJECTED" in result
+
+    def test_yaml_yaml_directive_rejected(self, esphome_dir):
+        from server import tools
+        payload = "%YAML 1.2\n---\nesphome:\n  name: x\n"
+        result = tools.push_files({"pwn7.yaml": payload})
+        assert "REJECTED" in result
+
+    def test_relative_include_inside_base_still_allowed_after_hardening(self, esphome_dir):
+        """Regression: the hardening should not over-block legitimate includes."""
+        from server import tools
+        payload = "esphome:\n  name: x\nshared: !include sub/common.yaml\n"
+        result = tools.push_files({"good2.yaml": payload})
+        assert "OK" in result
