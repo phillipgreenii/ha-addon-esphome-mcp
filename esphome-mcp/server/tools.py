@@ -232,6 +232,8 @@ def list_devices() -> str:
     archive_dir = os.path.join(ESPHOME_DIR, "archive")
     if os.path.isdir(archive_dir):
         for path in sorted(glob.glob(os.path.join(archive_dir, "*.yaml"))):
+            if _is_forbidden(path):
+                continue
             info = _parse_device_info(path)
             info["status"] = "archived"
             devices.append(info)
