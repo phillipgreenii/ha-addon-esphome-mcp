@@ -19,22 +19,23 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /usr/local/bin/platformio ix,
   # s6-overlay v3 wires its service-supervision chain via many helper
   # binaries (execlineb, s6-svscan, s6-svc, redirfd, fdmove, foreground,
-  # importas, with-contenv, etc.) that live under /command/ and the
-  # /package/admin/s6-overlay/... symlink farm. The init chain genuinely
-  # needs `ix` on the whole tree at boot; tightening to a single binary
-  # name silently breaks the supervisor. The dangerous primitives
-  # (ptrace, mount, sys_admin) are explicitly denied below.
-  /command/** ix,
-  /package/admin/s6-overlay/command/** ix,
-  /package/admin/s6/command/** ix,
-  /usr/bin/with-contenv ix,
-  /usr/bin/bashio ix,
+  # importas, with-contenv, s6-overlay-suexec, etc.) that live under
+  # /command/ and the /package/admin/s6-overlay/... symlink farm. The
+  # init chain needs `mrix` (mmap + read + inherit + execute) — `ix`
+  # alone causes downstream binaries to fail with `Permission denied`
+  # because the ELF loader can't read/map their code segments. The
+  # dangerous primitives (ptrace, mount, sys_admin) are explicitly
+  # denied below.
+  /command/** mrix,
+  /package/admin/s6-overlay/command/** mrix,
+  /package/admin/s6/command/** mrix,
+  /usr/bin/with-contenv mrix,
+  /usr/bin/bashio mrix,
   /usr/lib/bashio/** r,
   # /init needs `mr` in addition to `ix`. s6-overlay's stage-1 `/init`
-  # is the container entrypoint; depending on how HAOS Supervisor
-  # invokes it (direct exec vs `sh -c '/init'`), the kernel/shell needs
-  # to read (and mmap) the file to dispatch the interpreter. With `ix`
-  # alone the container fails to boot with
+  # is the container entrypoint; the kernel/shell needs to read (and
+  # mmap) the file to dispatch the interpreter. With `ix` alone the
+  # container fails to boot with
   # `/bin/sh: can't open '/init': Permission denied`. See also
   # `/etc/s6-overlay/** rix` below for the s6 supporting scripts.
   /init mrix,
