@@ -10,9 +10,23 @@
 #   ingress_port: 8099         — what Supervisor's ingress proxies to
 #   startup: application       — start after HA Core
 #   boot: auto                 — start with HA on boot
+#   apparmor: true             — Supervisor's default Docker AppArmor
+#                                profile. A custom apparmor.txt was
+#                                tried in 1.1.0–1.1.6 but proved too
+#                                brittle against s6-overlay v3's runtime
+#                                layout (/run/s6 scratch trees, version-
+#                                suffixed /package/admin/s6-overlay-*/
+#                                paths, eltest helper invocations). The
+#                                defense-in-depth still comes from
+#                                ingress-only transport (no host
+#                                network), no docker_api / hassio_api,
+#                                no privileged capabilities, bearer
+#                                auth + body-size limits at the app
+#                                layer, and unsafe-include scanning in
+#                                push_files.
 #
 name: ESPHome MCP Server
-version: 1.1.6
+version: 1.2.0
 slug: esphome-mcp
 # s6-overlay v3 (provided by ghcr.io/home-assistant/*-base-python) needs
 # to BE PID 1 to run its supervision tree. With the Supervisor default
