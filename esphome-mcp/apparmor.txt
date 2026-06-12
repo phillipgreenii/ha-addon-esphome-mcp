@@ -29,6 +29,12 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   /command/** mrix,
   /package/admin/s6-overlay/command/** mrix,
   /package/admin/s6/command/** mrix,
+  # Version-specific real targets. The /command/ and /package/admin/s6-overlay/
+  # entries above are symlinks that ultimately resolve to /package/admin/s6-overlay-<version>/
+  # and /package/admin/s6-<version>/. AppArmor evaluates the final target, so
+  # these must be allowed explicitly.
+  /package/admin/s6-overlay-*/** mrix,
+  /package/admin/s6-*/** mrix,
   /usr/bin/with-contenv mrix,
   /usr/bin/bashio mrix,
   /usr/lib/bashio/** r,
