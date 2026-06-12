@@ -66,3 +66,72 @@ jobs:
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: esphome-mcp/Dockerfile
+
+  # End-to-end boot smoke test: builds the addon image against the real HA
+  # base-python image and asserts /health responds 200 within 60s. This is
+  # the test that would have caught the 1.1.x release regressions (custom
+  # apparmor profile vs s6-overlay layout, `init: false` missing, mcp
+  # transport_security version-pin mismatch, ESPHOME_MCP_AUTH_TOKEN
+  # fail-closed) — none of which any unit test could observe.
+  smoke-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build addon image (amd64)
+        run: |
+          docker build \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.21 \
+            --build-arg BUILD_ARCH=amd64 \
+            -t esphome-mcp:smoke \
+            esphome-mcp
+
+      # run.sh reads addon settings via `bashio::config` from
+      # /data/options.json (Supervisor writes this at runtime). Outside
+      # Supervisor, we provide it ourselves so bashio doesn't fail and so
+      # the container doesn't try to auto-generate a token into /data.
+      - name: Provide minimal Supervisor options
+        run: |
+          mkdir -p /tmp/ci-data
+          cat > /tmp/ci-data/options.json <<'EOF'
+          {
+            "auth_token": "ci-smoke-test",
+            "compile_enabled": false,
+            "flash_enabled": false,
+            "max_concurrent_compiles": 1,
+            "max_body_mb": 8,
+            "max_file_mb": 1
+          }
+          EOF
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name esphome-mcp-smoke \
+            -p 8099:8099 \
+            -v /tmp/ci-data:/data \
+            esphome-mcp:smoke
+
+      - name: Wait for /health to return 200 (<60s)
+        run: |
+          deadline=$(( $(date +%s) + 60 ))
+          last_status=""
+          while (( $(date +%s) < deadline )); do
+            last_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8099/health || echo "curl-error")
+            if [[ "$last_status" == "200" ]]; then
+              elapsed=$(( $(date +%s) - (deadline - 60) ))
+              echo "✓ /health returned 200 after ${elapsed}s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::/health did not return 200 within 60s (last status: ${last_status})"
+          exit 1
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs esphome-mcp-smoke || true
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f esphome-mcp-smoke || true
