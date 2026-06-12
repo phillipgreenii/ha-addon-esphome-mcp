@@ -52,15 +52,16 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   # write supervisor state files (control fifos, event pipes) under these
   # paths, so they must be writable. The dangerous primitives (ptrace,
   # mount, sys_admin) are explicitly denied below.
-  # The directory-itself rules (`/run/s6/ rwk,` etc.) are required so
-  # s6-mkdir can create the parent before populating it; the `/run/s6/**`
-  # rules only cover children, not the directory itself.
+  # s6-overlay stage0 copies its bootstrap binaries into /run/s6/basedir/
+  # (and similar scratch trees) at boot, then exec's them — so these
+  # paths need execute, not just write. Without `mrix` on the children
+  # we get e.g. `/run/s6/basedir/bin/init: Permission denied`.
   /run/s6/ rwk,
-  /run/s6/** rwk,
+  /run/s6/** mrwkix,
   /run/s6-rc/ rwk,
-  /run/s6-rc/** rwk,
+  /run/s6-rc/** mrwkix,
   /run/service/ rwk,
-  /run/service/** rwk,
+  /run/service/** mrwkix,
 
   # Python site-packages — required for ESPHome imports
   /usr/lib/python3.*/** r,
