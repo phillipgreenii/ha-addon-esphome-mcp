@@ -52,8 +52,14 @@ profile esphome-mcp flags=(attach_disconnected,mediate_deleted) {
   # write supervisor state files (control fifos, event pipes) under these
   # paths, so they must be writable. The dangerous primitives (ptrace,
   # mount, sys_admin) are explicitly denied below.
+  # The directory-itself rules (`/run/s6/ rwk,` etc.) are required so
+  # s6-mkdir can create the parent before populating it; the `/run/s6/**`
+  # rules only cover children, not the directory itself.
+  /run/s6/ rwk,
   /run/s6/** rwk,
+  /run/s6-rc/ rwk,
   /run/s6-rc/** rwk,
+  /run/service/ rwk,
   /run/service/** rwk,
 
   # Python site-packages — required for ESPHome imports

@@ -12,7 +12,7 @@
 #   boot: auto                 — start with HA on boot
 #
 name: ESPHome MCP Server
-version: 1.1.4
+version: 1.1.5
 slug: esphome-mcp
 # s6-overlay v3 (provided by ghcr.io/home-assistant/*-base-python) needs
 # to BE PID 1 to run its supervision tree. With the Supervisor default
