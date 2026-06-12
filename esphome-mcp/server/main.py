@@ -6,13 +6,39 @@ import os
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
 
 from . import tools
 from .auth import BearerAuthMiddleware
 from .config import settings
 from .health import health_route
 from .limits import BodySizeLimitMiddleware
+
+# DNS-rebinding "protection" was introduced in mcp 1.10.0. When enabled
+# (the SDK default for HTTP transports binding to loopback), the SDK
+# rejects requests whose Host header isn't in a loopback allowlist —
+# which breaks HA Supervisor ingress, since the upstream Host header is
+# the addon container name (e.g. "addon_local_esphome_mcp:8099"), not
+# 127.0.0.1. Our auth boundary is the bearer token + HA ingress login,
+# not Host-header allowlisting.
+#
+# On mcp 1.9.x (our pinned runtime), the module doesn't exist and the
+# protection is not active — the addon works with no transport_security
+# parameter. On 1.10.0+ (dev env, or future runtime upgrades), the
+# import lands and we pass the disable flag. Keeping this guarded means
+# an unattended `uv pip compile` bump won't silently re-introduce the
+# 421 regression.
+try:
+    from mcp.server.transport_security import (
+        TransportSecuritySettings,
+    )
+
+    _transport_kwargs: dict = {
+        "transport_security": TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
+    }
+except ImportError:  # mcp < 1.10.0
+    _transport_kwargs = {}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,16 +49,7 @@ log = logging.getLogger("esphome-mcp")
 mcp = FastMCP(
     name="esphome",
     stateless_http=True,
-    # The MCP SDK auto-enables DNS-rebinding protection when host is one of
-    # ("127.0.0.1", "localhost", "::1") — the SDK's loopback default. Under
-    # HA Supervisor ingress the upstream Host header is the addon container
-    # name (e.g. "addon_local_esphome_mcp:8099"), NOT loopback. That breaks
-    # every production request with 421 Misdirected Request. Explicitly
-    # disable the protection: our auth boundary is the bearer token + HA
-    # ingress login, not Host-header allowlisting.
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=False,
-    ),
+    **_transport_kwargs,
 )
 
 
