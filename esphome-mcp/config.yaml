@@ -12,8 +12,14 @@
 #   boot: auto                 — start with HA on boot
 #
 name: ESPHome MCP Server
-version: 1.1.3
+version: 1.1.4
 slug: esphome-mcp
+# s6-overlay v3 (provided by ghcr.io/home-assistant/*-base-python) needs
+# to BE PID 1 to run its supervision tree. With the Supervisor default
+# `init: true`, tini is injected as PID 1, so s6-overlay-suexec aborts
+# with `fatal: can only run as pid 1`. Disable Supervisor's init shim
+# because we use s6-overlay as the in-container init.
+init: false
 description: >-
   MCP (Model Context Protocol) server exposing ESPHome operations as tools
   for Claude Code. Runs ESPHome commands locally on Home Assistant.
