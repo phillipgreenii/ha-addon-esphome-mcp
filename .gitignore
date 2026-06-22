@@ -13,3 +13,6 @@ htmlcov/
 
 # Internal AI/workflow planning artifacts — not for the public repo.
 docs/superpowers/
+
+# sp-bd-bridge per-session cache (local-only)
+.perles/
