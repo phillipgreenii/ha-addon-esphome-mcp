@@ -16,3 +16,7 @@ docs/superpowers/
 
 # sp-bd-bridge per-session cache (local-only)
 .perles/
+
+# bd/pb gate lock file (stray empty lock left by pb gate; causes spurious
+# dirty-tree failures for ff-merge-to-main landing)
+.beads.gate.lock
